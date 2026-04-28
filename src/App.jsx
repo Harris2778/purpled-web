@@ -2,7 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Heart, X, MessageCircle, User, Sparkles, MapPin, BookOpen, Search, Settings, Mail, ArrowRight, LogOut, Map as MapIcon, Navigation, Edit2, ChevronLeft, Check, ClipboardEdit, Lock, Unlock, Percent, AlertCircle } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, onSnapshot, query, getDoc } from 'firebase/firestore';
+// 注意这里新增了 getDocs 模块用于查重
+import { getFirestore, collection, doc, setDoc, onSnapshot, query, getDoc, getDocs } from 'firebase/firestore';
 
 // ----------------------------------------------------
 // 1. Firebase 钥匙配置
@@ -164,9 +165,6 @@ export default function App() {
   // ----------------------------------------------------
   useEffect(() => {
     if (!auth) return;
-
-    // 因为已经启用了邮箱/密码登录，所以我们移除自动注入和匿名登录逻辑，
-    // 直接监听用户通过邮箱/密码操作后的认证状态变化即可。
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
     });
@@ -251,14 +249,32 @@ export default function App() {
     return em.endsWith('@mails.tsinghua.edu.cn') || em.endsWith('@tsinghua.edu.cn');
   };
 
+  // 全新的注册逻辑（带用户名查重）
   const handleRegister = async () => {
+    if (!username.trim()) return setAuthError('请填写用户名');
     if (!checkTsinghuaEmail(email)) return setAuthError('必须使用清华大学教育邮箱');
     if (password.length < 6) return setAuthError('密码至少需要 6 位');
-    if (!username.trim()) return setAuthError('请填写用户名');
     setAuthError('');
 
     try {
-      showToast('正在注册中...');
+      showToast('正在验证用户名...');
+      
+      // 在注册前，去数据库检查用户名是否已经被占用
+      const profilesRef = collection(db, 'artifacts', appId, 'public', 'data', 'profiles');
+      const profilesSnap = await getDocs(profilesRef);
+      let isNameTaken = false;
+      
+      profilesSnap.forEach(doc => {
+        if (doc.data().name === username.trim()) {
+          isNameTaken = true;
+        }
+      });
+
+      if (isNameTaken) {
+        return setAuthError('该用户名已被别人抢先使用啦，请换一个昵称');
+      }
+
+      showToast('正在为您注册...');
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       await sendEmailVerification(userCredential.user);
       
@@ -272,7 +288,7 @@ export default function App() {
         const randomColor = colors[Math.floor(Math.random() * colors.length)];
 
         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'profiles', userCredential.user.uid), {
-          name: username,
+          name: username.trim(),
           email: email,
           color: randomColor,
           isPublic: false
@@ -281,8 +297,11 @@ export default function App() {
 
       setIsWaitVerify(true);
     } catch (error) {
-      if (error.code === 'auth/email-already-in-use') setAuthError('该邮箱已被注册，请直接登录');
-      else setAuthError('注册失败：' + error.message);
+      if (error.code === 'auth/email-already-in-use') {
+        setAuthError('该邮箱已被注册，请直接登录');
+      } else {
+        setAuthError('注册失败：' + error.message);
+      }
     }
   };
 
@@ -464,7 +483,7 @@ export default function App() {
         attribution: '© 高德地图'
       }).addTo(map);
 
-      // 我的位置 (全新首字母渐变图标)
+      // 我的位置
       const pNameInitialMe = userProfile.name ? userProfile.name[0] : '?';
       const myIconHtml = `
         <div class="relative flex items-center justify-center w-14 h-14">
@@ -479,7 +498,7 @@ export default function App() {
         zIndexOffset: 1000
       }).addTo(map);
 
-      // 附近用户 (去除图片，使用首字母与专属渐变色)
+      // 附近用户
       displayProfiles.forEach((profile, index) => {
         const idNum = String(profile.id).charCodeAt(0) || index;
         const latOffset = (Math.sin(idNum * 123) * 0.012);
@@ -556,13 +575,13 @@ export default function App() {
         <div className="space-y-4 animate-in slide-in-from-right-4 duration-300">
           {authMode === 'register' && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">怎么称呼你 (用户名)</label>
+              {/* 精简后的用户名表单 UI */}
+              <label className="block text-sm font-medium text-gray-700 mb-1">用户名</label>
               <input
                 type="text"
                 value={username}
                 onChange={(e) => { setUsername(e.target.value); setAuthError(''); }}
                 className="block w-full px-4 py-3.5 bg-gray-50 border border-gray-100 rounded-2xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-600 transition-all"
-                placeholder="例如：紫荆彭于晏"
               />
             </div>
           )}
@@ -990,7 +1009,6 @@ export default function App() {
 
                 return (
                   <div key={match.id} onClick={() => setCurrentChatUser(match)} className="flex items-center space-x-4 p-2 hover:bg-purple-50 rounded-2xl cursor-pointer transition-colors active:scale-95">
-                    {/* 消息列表的头像也改为了首字母渐变 */}
                     <div className={`w-14 h-14 rounded-full bg-gradient-to-br ${themeColor} flex items-center justify-center flex-shrink-0 overflow-hidden shadow-sm border border-white`}>
                        <span className="text-white text-xl font-black">{pName[0]}</span>
                     </div>
