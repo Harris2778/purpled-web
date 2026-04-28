@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Heart, X, MessageCircle, User, Sparkles, MapPin, BookOpen, Search, Settings, Mail, ArrowRight, LogOut, Map as MapIcon, Navigation, Camera, Edit2, ChevronLeft, Check, ClipboardEdit, Lock, Unlock, Percent, AlertCircle } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, onSnapshot, query } from 'firebase/firestore';
 
 // ----------------------------------------------------
@@ -128,10 +128,12 @@ const MATCH_QUESTIONS = [
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [authStep, setAuthStep] = useState('email');
+  const [authMode, setAuthMode] = useState('login'); // 切换 'login' (登录) 或 'register' (注册)
   const [email, setEmail] = useState('');
-  const [code, setCode] = useState('');
+  const [password, setPassword] = useState('');
+  const [username, setUsername] = useState('');
   const [authError, setAuthError] = useState('');
+  const [isWaitVerify, setIsWaitVerify] = useState(false); // 控制是否显示等待验证的界面
 
   const [activeTab, setActiveTab] = useState('discover'); 
   const [currentView, setCurrentView] = useState('main'); 
@@ -304,19 +306,62 @@ export default function App() {
     setTimeout(() => setToastMsg(''), 2500);
   };
 
-  const handleSendCode = () => {
-    if (!email || (!email.endsWith('@mails.tsinghua.edu.cn') && !email.endsWith('@tsinghua.edu.cn'))) {
-      setAuthError('请使用清华大学教育邮箱 (@mails.tsinghua.edu.cn)');
-      return;
-    }
-    setAuthError('');
-    setAuthStep('code');
+  const checkTsinghuaEmail = (em) => {
+    return em.endsWith('@mails.tsinghua.edu.cn') || em.endsWith('@tsinghua.edu.cn');
   };
 
-  const handleLogin = () => {
-    if (code.length < 4) return setAuthError('请输入完整的验证码');
+  const handleRegister = async () => {
+    if (!checkTsinghuaEmail(email)) return setAuthError('必须使用清华大学教育邮箱');
+    if (password.length < 6) return setAuthError('密码至少需要 6 位');
+    if (!username.trim()) return setAuthError('请填写用户名');
     setAuthError('');
-    setIsAuthenticated(true);
+
+    try {
+      showToast('正在注册中...');
+      // 1. 在 Firebase 创建账号
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      
+      // 2. 发送验证邮件
+      await sendEmailVerification(userCredential.user);
+      
+      // 3. 将初始用户名保存到你的 profiles 数据库（为了防止用户没填资料前就没有名字）
+      if (db) {
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'profiles', userCredential.user.uid), {
+          name: username,
+          email: email,
+          isPublic: false
+        }, { merge: true });
+      }
+
+      setIsWaitVerify(true); // 切换到提示去邮箱激活的界面
+    } catch (error) {
+      if (error.code === 'auth/email-already-in-use') setAuthError('该邮箱已被注册，请直接登录');
+      else setAuthError('注册失败：' + error.message);
+    }
+  };
+
+  const handleLogin = async () => {
+    if (!email || !password) return setAuthError('请填写邮箱和密码');
+    setAuthError('');
+
+    try {
+      showToast('正在验证...');
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      
+      // 检查邮箱是否已经通过点击链接激活
+      if (!userCredential.user.emailVerified) {
+        setAuthError('该邮箱尚未激活，请前往清华邮箱点击激活链接');
+        // 可选：在这里再发一次验证邮件
+        // await sendEmailVerification(userCredential.user); 
+        return;
+      }
+
+      // 验证通过，进入主界面
+      setIsAuthenticated(true);
+    } catch (error) {
+      if (error.code === 'auth/invalid-credential') setAuthError('邮箱或密码错误');
+      else setAuthError('登录失败：' + error.message);
+    }
   };
 
   const handleSaveToCloud = async () => {
@@ -538,76 +583,87 @@ export default function App() {
 
   // ================= 模块渲染逻辑 =================
 
-  const renderAuth = () => {
+const renderAuth = () => {
+    if (isWaitVerify) {
+      return (
+        <div className="w-full h-full flex flex-col items-center px-8 pt-32 bg-white relative text-center">
+          <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-6">
+            <Mail className="w-10 h-10 text-green-600" />
+          </div>
+          <h2 className="text-2xl font-black text-gray-900 mb-2">验证邮件已发送</h2>
+          <p className="text-gray-500 mb-8">我们已向 <span className="font-bold text-purple-600">{email}</span> 发送了一封激活邮件。请前往邮箱点击链接完成验证。</p>
+          <button onClick={() => { setIsWaitVerify(false); setAuthMode('login'); }} className="w-full py-4 bg-purple-600 text-white rounded-2xl font-bold active:scale-95 transition-all">
+            我已验证，去登录
+          </button>
+        </div>
+      );
+    }
+
     return (
-      <div className="w-full h-full flex flex-col px-8 pt-20 bg-white relative">
+      <div className="w-full h-full flex flex-col px-8 pt-16 bg-white relative overflow-y-auto pb-10">
         <div className="w-16 h-16 bg-purple-600 rounded-2xl flex items-center justify-center transform rotate-12 mb-8 shadow-lg shadow-purple-500/30">
            <span className="text-white font-black text-2xl -rotate-12">THU</span>
         </div>
         
-        <h1 className="text-3xl font-black text-gray-900 mb-2">欢迎来到Purpled</h1>
-        <p className="text-gray-500 mb-10">专属于清华的男生交友社区</p>
+        <h1 className="text-3xl font-black text-gray-900 mb-2">
+          {authMode === 'login' ? '欢迎回来' : '注册 Purpled'}
+        </h1>
+        <p className="text-gray-500 mb-8">专属于清华的男生交友社区</p>
 
-        {authStep === 'email' ? (
-          <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
+        <div className="space-y-4 animate-in slide-in-from-right-4 duration-300">
+          {authMode === 'register' && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">清华大学教育邮箱</label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                  <Mail className="h-5 w-5 text-gray-400" />
-                </div>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    setAuthError('');
-                  }}
-                  className="block w-full pl-11 pr-4 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-600 focus:bg-white transition-all"
-                  placeholder="name@mails.tsinghua.edu.cn"
-                />
-              </div>
-              {authError && <p className="mt-2 text-sm text-red-500 font-medium">{authError}</p>}
-            </div>
-            
-            <button
-              onClick={handleSendCode}
-              className="w-full py-4 bg-purple-600 text-white rounded-2xl font-bold flex justify-center items-center hover:bg-purple-700 shadow-lg shadow-purple-600/30 transition-all active:scale-[0.98]"
-            >
-              获取验证码
-              <ArrowRight className="ml-2 w-5 h-5" />
-            </button>
-          </div>
-        ) : (
-          <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">输入验证码</label>
-              <p className="text-sm text-purple-600 mb-4 bg-purple-50 p-3 rounded-xl border border-purple-100">
-                验证码已发送至 <span className="font-bold">{email}</span>
-                <button onClick={() => setAuthStep('email')} className="ml-2 text-gray-500 underline text-xs">修改</button>
-              </p>
+              <label className="block text-sm font-medium text-gray-700 mb-1">怎么称呼你 (用户名)</label>
               <input
                 type="text"
-                maxLength={6}
-                value={code}
-                onChange={(e) => {
-                  setCode(e.target.value.replace(/\D/g, ''));
-                  setAuthError('');
-                }}
-                className="block w-full px-4 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-gray-900 text-center text-2xl tracking-[0.5em] font-mono focus:outline-none focus:ring-2 focus:ring-purple-600 focus:bg-white transition-all"
-                placeholder="0000"
+                value={username}
+                onChange={(e) => { setUsername(e.target.value); setAuthError(''); }}
+                className="block w-full px-4 py-3.5 bg-gray-50 border border-gray-100 rounded-2xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-600 transition-all"
+                placeholder="例如：紫荆彭于晏"
               />
-              {authError && <p className="mt-2 text-sm text-red-500 font-medium text-center">{authError}</p>}
             </div>
-            
-            <button
-              onClick={handleLogin}
-              className="w-full py-4 bg-purple-600 text-white rounded-2xl font-bold flex justify-center items-center hover:bg-purple-700 shadow-lg shadow-purple-600/30 transition-all active:scale-[0.98]"
+          )}
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">清华邮箱</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => { setEmail(e.target.value.toLowerCase()); setAuthError(''); }}
+              className="block w-full px-4 py-3.5 bg-gray-50 border border-gray-100 rounded-2xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-600 transition-all"
+              placeholder="@mails.tsinghua.edu.cn"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">密码</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => { setPassword(e.target.value); setAuthError(''); }}
+              className="block w-full px-4 py-3.5 bg-gray-50 border border-gray-100 rounded-2xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-600 transition-all"
+              placeholder={authMode === 'register' ? "设置一个至少6位的密码" : "输入密码"}
+            />
+          </div>
+
+          {authError && <p className="text-sm text-red-500 font-medium">{authError}</p>}
+          
+          <button
+            onClick={authMode === 'login' ? handleLogin : handleRegister}
+            className="w-full py-4 mt-2 bg-purple-600 text-white rounded-2xl font-bold shadow-lg shadow-purple-600/30 transition-all active:scale-[0.98]"
+          >
+            {authMode === 'login' ? '登录' : '同意协议并注册'}
+          </button>
+
+          <div className="text-center mt-6">
+            <button 
+              onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthError(''); }}
+              className="text-sm text-gray-500 font-medium hover:text-purple-600 transition-colors"
             >
-              验证并进入
+              {authMode === 'login' ? '没有账号？点击注册' : '已有账号？直接登录'}
             </button>
           </div>
-        )}
+        </div>
       </div>
     );
   };
