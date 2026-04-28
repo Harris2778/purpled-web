@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Purpled - 专属于清华的男生交友社区</title>
+    <!-- 引入 Tailwind CSS 实时编译脚本 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Leaflet 地图样式 -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+      /* 强制清除可能残余的浏览器默认样式 */
+      body, html {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background-color: #f3f4f6; /* 浅灰色背景 */
+      }
+      #root {
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
