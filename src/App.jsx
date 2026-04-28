@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Heart, X, MessageCircle, User, Sparkles, MapPin, BookOpen, Search, Settings, Mail, ArrowRight, LogOut, Map as MapIcon, Navigation, Camera, Edit2, ChevronLeft, Check, ClipboardEdit, Lock, Unlock, Percent, AlertCircle } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, onSnapshot, query } from 'firebase/firestore';
+import { getFirestore, collection, doc, setDoc, onSnapshot, query, getDoc } from 'firebase/firestore';
 
 // ----------------------------------------------------
 // 1. 这里就是你从 Firebase 拿到的“钥匙”
@@ -25,74 +25,6 @@ const auth = getAuth(firebaseApp);
 const db = getFirestore(firebaseApp);
 const appId = 'purpled-thu-v1'; // 你的应用ID
 
-
-// 模拟校园用户数据
-const MOCK_PROFILES = [
-  {
-    id: 1,
-    name: "阿杰",
-    age: 20,
-    major: "计算机科学与技术",
-    location: "紫荆公寓",
-    height: 181,
-    weight: 72,
-    tagMode: ["1", "side"],
-    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Ajie&backgroundColor=b6e3f4",
-    color: "from-purple-500 to-indigo-500",
-    mapPosition: { top: '25%', left: '20%' },
-    matchScore: 96,
-    isPublic: true, 
-    answers: { q19: "认真交往的恋爱对象", q18: "劳逸结合，一半一半", q15: ["性格和情绪稳定", "外形条件"], q1: ["1", "side"], q3: "同级/同龄", q9: "夜跑、看展、写代码", q22: "浙江", q25: "一周三次左右" }
-  },
-  {
-    id: 2,
-    name: "星宇",
-    age: 21,
-    major: "美术学院 - 工业设计",
-    location: "南区宿舍",
-    height: 176,
-    weight: 60,
-    tagMode: ["0", "其他(颜控)"],
-    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Xingyu&backgroundColor=ffdfbf",
-    color: "from-pink-500 to-rose-500",
-    mapPosition: { top: '70%', left: '80%' },
-    matchScore: 89,
-    isPublic: false, 
-    answers: {}
-  },
-  {
-    id: 3,
-    name: "林一",
-    age: 19,
-    major: "经济管理学院",
-    location: "紫荆公寓",
-    height: 179,
-    weight: 65,
-    tagMode: ["side", "m"],
-    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Linyi&backgroundColor=c0aede",
-    color: "from-blue-400 to-cyan-500",
-    mapPosition: { top: '35%', left: '75%' },
-    matchScore: 85,
-    isPublic: true,
-    answers: { q19: "贴贴抱抱的轻松关系", q26: "必须当晚解决", q1: ["side", "m"], q8: ["INFJ", "ENFJ"], q22: "广东", q24: "轮流买单或AA", q13: ["温和包容", "佛系松弛"] }
-  },
-  {
-    id: 4,
-    name: "学长Alex",
-    age: 24,
-    major: "电子工程系 (研二)",
-    location: "双清公寓",
-    height: 185,
-    weight: 78,
-    tagMode: ["1", "s"],
-    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Alex&backgroundColor=d1d4f9",
-    color: "from-emerald-400 to-teal-500",
-    mapPosition: { top: '80%', left: '30%' },
-    matchScore: 82,
-    isPublic: false,
-    answers: {}
-  }
-];
 
 const TAG_OPTIONS = ['1', '0', 's', 'm', 'side', '其他'];
 const MBTI_OPTIONS = ['INTJ','INTP','ENTJ','ENTP','INFJ','INFP','ENFJ','ENFP','ISTJ','ISFJ','ESTJ','ESFJ','ISTP','ISFP','ESTP','ESFP'];
@@ -297,8 +229,39 @@ export default function App() {
     }
   }, [currentUser]);
 
-  // 合并数据
-  const displayProfiles = [...realUsers, ...MOCK_PROFILES];
+  // ----------------------------------------------------
+  // 新增：当用户登录成功时，自动从云端拉取自己的个人资料（同步昵称）
+  // ----------------------------------------------------
+  useEffect(() => {
+    if (!currentUser || !db) return;
+    
+    const fetchMyProfile = async () => {
+      try {
+        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', currentUser.uid);
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists()) {
+          const myData = docSnap.data();
+          // 用云端的真实数据覆盖本地的默认状态
+          setUserProfile(prev => ({
+            ...prev,
+            ...myData, // 这里会把云端的 name 覆盖掉默认的 '清华学子'
+          }));
+          // 同步输入框的临时名字，防止点击修改时显示旧名字
+          if (myData.name) {
+            setTempName(myData.name); 
+          }
+        }
+      } catch (error) {
+        console.error("拉取个人资料失败:", error);
+      }
+    };
+
+    fetchMyProfile();
+  }, [currentUser, db]);
+
+  // 修改后的代码（只显示云端拉取的真实用户）：
+  const displayProfiles = realUsers;
 
   // UI 交互
   const showToast = (msg) => {
