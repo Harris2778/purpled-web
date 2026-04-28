@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Heart, X, MessageCircle, User, Sparkles, MapPin, BookOpen, Search, Settings, Mail, ArrowRight, LogOut, Map as MapIcon, Navigation, Camera, Edit2, ChevronLeft, Check, ClipboardEdit, Lock, Unlock, Percent, AlertCircle } from 'lucide-react';
+import { Heart, X, MessageCircle, User, Sparkles, MapPin, BookOpen, Search, Settings, Mail, ArrowRight, LogOut, Map as MapIcon, Navigation, Edit2, ChevronLeft, Check, ClipboardEdit, Lock, Unlock, Percent, AlertCircle } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification } from 'firebase/auth';
+import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, onSnapshot, query, getDoc } from 'firebase/firestore';
 
 // ----------------------------------------------------
-// 1. 这里就是你从 Firebase 拿到的“钥匙”
+// 1. Firebase 钥匙配置
 // ----------------------------------------------------
 const firebaseConfig = {
   apiKey: "AIzaSyDjjA2cwO2k5F2eM2zORVB56MM_p9dNBUQ",
@@ -18,13 +18,12 @@ const firebaseConfig = {
 };
 
 // ----------------------------------------------------
-// 2. 使用你的配置进行初始化（替换掉截图里的那几行）
+// 2. 初始化
 // ----------------------------------------------------
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
 const db = getFirestore(firebaseApp);
-const appId = 'purpled-thu-v1'; // 你的应用ID
-
+const appId = 'purpled-thu-v1'; // 应用ID
 
 const TAG_OPTIONS = ['1', '0', 's', 'm', 'side', '其他'];
 const MBTI_OPTIONS = ['INTJ','INTP','ENTJ','ENTP','INFJ','INFP','ENFJ','ENFP','ISTJ','ISFJ','ESTJ','ESFJ','ISTP','ISFP','ESTP','ESFP'];
@@ -60,12 +59,12 @@ const MATCH_QUESTIONS = [
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [authMode, setAuthMode] = useState('login'); // 切换 'login' (登录) 或 'register' (注册)
+  const [authMode, setAuthMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
   const [authError, setAuthError] = useState('');
-  const [isWaitVerify, setIsWaitVerify] = useState(false); // 控制是否显示等待验证的界面
+  const [isWaitVerify, setIsWaitVerify] = useState(false);
 
   const [activeTab, setActiveTab] = useState('discover'); 
   const [currentView, setCurrentView] = useState('main'); 
@@ -77,9 +76,9 @@ export default function App() {
   // 地图与定位相关状态
   const [locationEnabled, setLocationEnabled] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
-  const [userLoc, setUserLoc] = useState([40.0000, 116.3265]); // 默认清华大学坐标
+  const [userLoc, setUserLoc] = useState([40.0000, 116.3265]); 
   const [isMapLoaded, setIsMapLoaded] = useState(false); 
-  const mapContainerRef = useRef(null); // 安全的地图容器引用
+  const mapContainerRef = useRef(null);
 
   // 提示与模态框
   const [toastMsg, setToastMsg] = useState('');
@@ -89,16 +88,15 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [realUsers, setRealUsers] = useState([]);
 
-  // 新增：实时聊天相关状态
-  const [currentChatUser, setCurrentChatUser] = useState(null); // 当前正在聊天的对象
-  const [allMessages, setAllMessages] = useState([]); // 云端所有消息
-  const [inputText, setInputText] = useState(''); // 聊天输入框
-  const chatEndRef = useRef(null); // 用于自动滚动到底部
+  // 实时聊天相关状态
+  const [currentChatUser, setCurrentChatUser] = useState(null); 
+  const [allMessages, setAllMessages] = useState([]); 
+  const [inputText, setInputText] = useState(''); 
+  const chatEndRef = useRef(null); 
 
   // 个人资料与问卷
   const [userProfile, setUserProfile] = useState({
     name: '清华学子',
-    avatarUrl: null,
     gender: '男',
     age: '20',
     major: '软件工程',
@@ -121,9 +119,8 @@ export default function App() {
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [tempName, setTempName] = useState(userProfile.name);
-  const fileInputRef = useRef(null);
 
-  // 新增：每次收到新消息时，聊天界面自动滚动到底部
+  // 每次收到新消息时，聊天界面自动滚动到底部
   useEffect(() => {
     if (currentChatUser && chatEndRef.current) {
       chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -131,7 +128,7 @@ export default function App() {
   }, [allMessages, currentChatUser]);
 
   // ----------------------------------------------------
-  // 初始化全局 Leaflet 地图脚本资源 (安全加载)
+  // 初始化全局 Leaflet 地图脚本资源
   // ----------------------------------------------------
   useEffect(() => {
     if (document.getElementById('leaflet-script')) {
@@ -167,19 +164,9 @@ export default function App() {
   // ----------------------------------------------------
   useEffect(() => {
     if (!auth) return;
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (err) {
-        console.error("Auth initialization failed:", err);
-      }
-    };
-    initAuth();
 
+    // 因为已经启用了邮箱/密码登录，所以我们移除自动注入和匿名登录逻辑，
+    // 直接监听用户通过邮箱/密码操作后的认证状态变化即可。
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
     });
@@ -207,7 +194,7 @@ export default function App() {
     }
   }, [currentUser]);
 
-  // 新增：监听云端的所有实时聊天消息
+  // 监听云端的所有实时聊天消息
   useEffect(() => {
     if (!currentUser || !db) return;
     try {
@@ -217,7 +204,6 @@ export default function App() {
         snapshot.forEach((docSnap) => {
           msgs.push({ id: docSnap.id, ...docSnap.data() });
         });
-        // 在本地按时间戳排序以符合开发规范
         msgs.sort((a, b) => a.timestamp - b.timestamp);
         setAllMessages(msgs);
       }, (error) => {
@@ -229,9 +215,7 @@ export default function App() {
     }
   }, [currentUser]);
 
-  // ----------------------------------------------------
-  // 新增：当用户登录成功时，自动从云端拉取自己的个人资料（同步昵称）
-  // ----------------------------------------------------
+  // 当用户登录成功时，自动从云端拉取自己的个人资料
   useEffect(() => {
     if (!currentUser || !db) return;
     
@@ -242,15 +226,9 @@ export default function App() {
         
         if (docSnap.exists()) {
           const myData = docSnap.data();
-          // 用云端的真实数据覆盖本地的默认状态
-          setUserProfile(prev => ({
-            ...prev,
-            ...myData, // 这里会把云端的 name 覆盖掉默认的 '清华学子'
-          }));
-          // 同步输入框的临时名字，防止点击修改时显示旧名字
-          if (myData.name) {
-            setTempName(myData.name); 
-          }
+          setUserProfile(prev => ({ ...prev, ...myData }));
+          if (myData.answers) setQaAnswers(myData.answers); 
+          if (myData.name) setTempName(myData.name); 
         }
       } catch (error) {
         console.error("拉取个人资料失败:", error);
@@ -260,7 +238,7 @@ export default function App() {
     fetchMyProfile();
   }, [currentUser, db]);
 
-  // 修改后的代码（只显示云端拉取的真实用户）：
+  // 只显示云端拉取的真实用户
   const displayProfiles = realUsers;
 
   // UI 交互
@@ -281,22 +259,27 @@ export default function App() {
 
     try {
       showToast('正在注册中...');
-      // 1. 在 Firebase 创建账号
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      
-      // 2. 发送验证邮件
       await sendEmailVerification(userCredential.user);
       
-      // 3. 将初始用户名保存到你的 profiles 数据库（为了防止用户没填资料前就没有名字）
       if (db) {
+        // 给新注册用户随机分配一个渐变色主题
+        const colors = [
+          'from-blue-400 to-purple-500', 'from-pink-400 to-rose-500', 
+          'from-emerald-400 to-teal-500', 'from-orange-400 to-amber-500',
+          'from-indigo-400 to-cyan-500'
+        ];
+        const randomColor = colors[Math.floor(Math.random() * colors.length)];
+
         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'profiles', userCredential.user.uid), {
           name: username,
           email: email,
+          color: randomColor,
           isPublic: false
         }, { merge: true });
       }
 
-      setIsWaitVerify(true); // 切换到提示去邮箱激活的界面
+      setIsWaitVerify(true);
     } catch (error) {
       if (error.code === 'auth/email-already-in-use') setAuthError('该邮箱已被注册，请直接登录');
       else setAuthError('注册失败：' + error.message);
@@ -311,15 +294,10 @@ export default function App() {
       showToast('正在验证...');
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       
-      // 检查邮箱是否已经通过点击链接激活
       if (!userCredential.user.emailVerified) {
         setAuthError('该邮箱尚未激活，请前往清华邮箱点击激活链接');
-        // 可选：在这里再发一次验证邮件
-        // await sendEmailVerification(userCredential.user); 
         return;
       }
-
-      // 验证通过，进入主界面
       setIsAuthenticated(true);
     } catch (error) {
       if (error.code === 'auth/invalid-credential') setAuthError('邮箱或密码错误');
@@ -330,9 +308,7 @@ export default function App() {
   const handleSaveToCloud = async () => {
     if (!currentUser || !db) return showToast('未登录或云数据库未连接，保存失败');
 
-    // 定义一个内部保存逻辑：接收真实的或默认的经纬度作为“基准点”
     const saveWithLocation = async (baseLat, baseLng) => {
-      // 核心秘籍：在基准点上加上随机偏移量（保护隐私 + 防止头像重叠）
       const finalLat = baseLat + (Math.random() - 0.5) * 0.005;
       const finalLng = baseLng + (Math.random() - 0.5) * 0.005;
 
@@ -342,16 +318,13 @@ export default function App() {
           name: userProfile.name,
           age: userProfile.age,
           major: userProfile.major,
-          location: "紫荆校园", // 这里保持文字，用于卡片上的 UI 显示
-          // --- 写入最终计算好的坐标 ---
+          location: "紫荆校园", 
           latitude: finalLat,  
           longitude: finalLng, 
-          // ----------------------------
           height: userProfile.height,
           weight: userProfile.weight,
           tagMode: userProfile.tagMode,
-          avatarUrl: userProfile.avatarUrl || "https://api.dicebear.com/7.x/avataaars/svg?seed=" + currentUser.uid,
-          color: "from-blue-400 to-purple-500", 
+          customTag: userProfile.customTag || '',
           matchScore: Math.floor(Math.random() * 15) + 85, 
           isPublic: isQaPublic,
           answers: qaAnswers,
@@ -366,23 +339,43 @@ export default function App() {
 
     showToast('正在获取定位并保存...');
 
-    // 尝试获取真实GPS
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
-        (position) => {
-          // 获取成功：使用用户的真实 GPS 作为基准点
-          saveWithLocation(position.coords.latitude, position.coords.longitude);
-        },
+        (position) => { saveWithLocation(position.coords.latitude, position.coords.longitude); },
         (error) => {
-          // 获取失败（用户拒绝授权或没信号）：使用紫荆公寓作为默认基准点
           console.warn("定位获取失败，使用默认坐标", error);
           saveWithLocation(40.002, 116.326);
         },
         { timeout: 5000, enableHighAccuracy: true }
       );
     } else {
-      // 浏览器不支持：直接使用默认基准点
       saveWithLocation(40.002, 116.326);
+    }
+  };
+
+  const handleSaveProfileInfo = async () => {
+    if (!currentUser || !db) {
+      setCurrentView('main');
+      return;
+    }
+    try {
+      showToast('正在保存个人资料...');
+      const profileRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', currentUser.uid);
+      await setDoc(profileRef, {
+        gender: userProfile.gender || '男',
+        age: userProfile.age || '20',
+        major: userProfile.major || '未填写专业',
+        height: userProfile.height || '',
+        weight: userProfile.weight || '',
+        tagMode: userProfile.tagMode || [],
+        customTag: userProfile.customTag || '',
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      showToast('资料保存成功');
+      setCurrentView('main');
+    } catch (error) {
+      console.error("保存资料失败:", error);
+      showToast('保存失败，请检查网络');
     }
   };
 
@@ -399,15 +392,13 @@ export default function App() {
     }
   };
 
-  // 新增：发送聊天消息到云端
   const handleSendMessage = async () => {
     if (!inputText.trim() || !currentUser || !currentChatUser || !db) return;
     
     const text = inputText.trim();
-    setInputText(''); // 乐观更新：立刻清空输入框
+    setInputText(''); 
     
     try {
-      // 双方的 UID 排序组合作为唯一的聊天房间 ID
       const chatId = [String(currentUser.uid), String(currentChatUser.id)].sort().join('_');
       const msgRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'messages'));
       
@@ -450,22 +441,14 @@ export default function App() {
     });
   };
 
-  const handleAvatarUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const imageUrl = URL.createObjectURL(file);
-      setUserProfile({ ...userProfile, avatarUrl: imageUrl });
-    }
-  };
-
   // ----------------------------------------------------
-  // 地图交互渲染钩子 (安全挂载机制)
+  // 地图交互渲染钩子
   // ----------------------------------------------------
   useEffect(() => {
     if (activeTab !== 'nearby' || !locationEnabled || !isMapLoaded || !mapContainerRef.current) return;
     
     const container = mapContainerRef.current;
-    if (container._leaflet_id) return; // 避免 React 重绘引发多次挂载
+    if (container._leaflet_id) return; 
 
     let map;
     try {
@@ -474,7 +457,6 @@ export default function App() {
         attributionControl: false
       }).setView(userLoc, 15);
 
-      // 将原来的国外地图替换为：高德地图 (AMap) 的高清国内底图
       window.L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
         subdomains: ['1', '2', '3', '4'],
         maxZoom: 18,
@@ -482,13 +464,13 @@ export default function App() {
         attribution: '© 高德地图'
       }).addTo(map);
 
-      // 我的位置
-      const myAvatar = userProfile.avatarUrl || 'https://api.dicebear.com/7.x/avataaars/svg?seed=Me';
+      // 我的位置 (全新首字母渐变图标)
+      const pNameInitialMe = userProfile.name ? userProfile.name[0] : '?';
       const myIconHtml = `
         <div class="relative flex items-center justify-center w-14 h-14">
           <div class="absolute w-full h-full bg-purple-500 rounded-full animate-ping opacity-50" style="animation-duration: 2.5s;"></div>
-          <div class="absolute w-12 h-12 bg-white rounded-full p-1 shadow-2xl border-2 border-purple-600 z-10 overflow-hidden">
-             <img src="${myAvatar}" class="w-full h-full object-cover" />
+          <div class="absolute w-12 h-12 bg-gradient-to-br from-purple-600 to-pink-500 rounded-full shadow-2xl border-2 border-white z-10 flex items-center justify-center overflow-hidden">
+             <span class="text-2xl font-black text-white">${pNameInitialMe}</span>
           </div>
         </div>
       `;
@@ -497,22 +479,21 @@ export default function App() {
         zIndexOffset: 1000
       }).addTo(map);
 
-      // 附近用户
+      // 附近用户 (去除图片，使用首字母与专属渐变色)
       displayProfiles.forEach((profile, index) => {
         const idNum = String(profile.id).charCodeAt(0) || index;
         const latOffset = (Math.sin(idNum * 123) * 0.012);
         const lngOffset = (Math.cos(idNum * 321) * 0.012);
         const pName = profile.name || '?';
         const pNameInitial = pName.length > 0 ? pName[0] : '?';
+        const themeColor = profile.color || 'from-blue-400 to-blue-600';
 
-        const avatarHtml = profile.avatarUrl
-          ? `<img src="${profile.avatarUrl}" class="w-full h-full object-cover" />`
-          : `<span class="text-xl font-bold text-gray-400 opacity-50">${pNameInitial}</span>`;
+        const avatarHtml = `<span class="text-xl font-black text-white shadow-sm">${pNameInitial}</span>`;
 
         const iconHtml = `
           <div class="relative group cursor-pointer flex flex-col items-center">
-            <div class="w-12 h-12 rounded-full bg-gradient-to-br ${profile.color || 'from-blue-400 to-blue-600'} p-0.5 shadow-md transform transition-transform group-hover:scale-125 group-hover:shadow-2xl z-10">
-              <div class="w-full h-full bg-white rounded-full flex items-center justify-center overflow-hidden border border-white/50">
+            <div class="w-12 h-12 rounded-full bg-gradient-to-br ${themeColor} p-0.5 shadow-md transform transition-transform group-hover:scale-125 group-hover:shadow-2xl z-10">
+              <div class="w-full h-full rounded-full flex items-center justify-center overflow-hidden border border-white/50">
                 ${avatarHtml}
               </div>
               <div class="absolute bottom-0 right-0 w-3 h-3 bg-green-400 border-2 border-white rounded-full shadow-sm"></div>
@@ -536,17 +517,16 @@ export default function App() {
       console.error("Leaflet map rendering error:", err);
     }
 
-    // 卸载地图实例防止内存泄漏或脏状态
     return () => {
       if (map) {
         map.remove();
       }
     };
-  }, [activeTab, locationEnabled, isMapLoaded, displayProfiles, userProfile.avatarUrl, userLoc]);
+  }, [activeTab, locationEnabled, isMapLoaded, displayProfiles, userProfile.name, userLoc]);
 
   // ================= 模块渲染逻辑 =================
 
-const renderAuth = () => {
+  const renderAuth = () => {
     if (isWaitVerify) {
       return (
         <div className="w-full h-full flex flex-col items-center px-8 pt-32 bg-white relative text-center">
@@ -777,67 +757,70 @@ const renderAuth = () => {
     }
     const profile = displayProfiles[currentIndex];
     const pName = profile.name || '?';
-    
+    const themeColor = profile.color || 'from-purple-500 to-pink-500';
+
     return (
       <div className="relative w-full h-full flex flex-col pt-4 pb-2">
         <div 
           onClick={() => handleViewProfileClick(profile)}
-          className="flex-1 w-full bg-white rounded-3xl shadow-xl overflow-hidden flex flex-col relative border border-purple-50 cursor-pointer group"
+          className="flex-1 w-full bg-white rounded-[2.5rem] shadow-xl overflow-hidden flex flex-col relative border border-gray-100 cursor-pointer group p-6"
         >
-          <div className={`h-[55%] w-full bg-gradient-to-br ${profile.color || 'from-blue-400 to-purple-500'} relative flex items-center justify-center overflow-hidden`}>
-             {profile.avatarUrl ? (
-               <img src={profile.avatarUrl} alt={pName} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
-             ) : (
-               <span className="text-white text-6xl font-bold opacity-30">{pName[0]}</span>
-             )}
-             
-             <div className="absolute top-4 right-4 bg-white/90 backdrop-blur-md px-3 py-1.5 rounded-2xl flex items-center space-x-1 shadow-lg border border-white/50">
-                <Percent className="w-4 h-4 text-pink-500" />
-                <span className="text-pink-600 font-black text-sm">契合度 {profile.matchScore || 90}%</span>
-             </div>
+          {/* 卡片顶栏：契合度与位置 */}
+          <div className="flex justify-between items-start mb-2">
+            <div className="bg-pink-50 px-3 py-1.5 rounded-full text-xs font-black flex items-center text-pink-600 border border-pink-100">
+               <Percent className="w-3 h-3 mr-1" /> 契合度 {profile.matchScore || 90}%
+            </div>
+            {profile.isPublic ? (
+               <Unlock className="w-4 h-4 text-green-500" />
+            ) : (
+               <Lock className="w-4 h-4 text-orange-400" />
+            )}
+          </div>
 
-             <div className="absolute top-4 left-4 bg-black/30 backdrop-blur-md px-3 py-1 rounded-full flex items-center space-x-1 text-white text-sm">
-                <MapPin className="w-3 h-3" /><span>{profile.location || '紫荆校园'}</span>
+          {/* 卡片核心区：排版化巨大昵称 */}
+          <div className="flex-1 flex flex-col justify-center items-center text-center relative mt-4">
+             {/* 背景隐隐约约的巨大首字母 */}
+             <div className="absolute inset-0 flex items-center justify-center opacity-[0.03] pointer-events-none overflow-hidden">
+                <span className="text-[18rem] font-black leading-none">{pName[0]}</span>
              </div>
              
-             <div className="absolute bottom-0 w-full h-1/3 bg-gradient-to-t from-white to-transparent"></div>
+             {/* 专属色块首字母 */}
+             <div className={`w-20 h-20 rounded-2xl bg-gradient-to-br ${themeColor} flex items-center justify-center mb-6 shadow-lg shadow-purple-500/20 transform -rotate-3`}>
+                 <span className="text-4xl font-black text-white">{pName[0]}</span>
+             </div>
+             
+             {/* 渐变色大名字 */}
+             <h2 className={`text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r ${themeColor} tracking-tight mb-2 drop-shadow-sm`}>
+               {pName}
+             </h2>
+             <span className="text-xl font-bold text-gray-400">{profile.age || '20'} 岁</span>
           </div>
           
-          <div className="p-5 flex-1 flex flex-col bg-white relative">
-            <div className="flex justify-between items-center mb-3">
-              <h2 className="text-3xl font-black text-gray-900 tracking-tight">{pName} <span className="text-2xl font-normal text-gray-500 ml-1">{profile.age || '20'}</span></h2>
-              {profile.isPublic ? (
-                 <span className="flex items-center text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded-md border border-green-100">
-                   <Unlock className="w-3 h-3 mr-1"/> 资料公开
-                 </span>
-              ) : (
-                 <span className="flex items-center text-xs font-bold text-orange-500 bg-orange-50 px-2 py-1 rounded-md border border-orange-100">
-                   <Lock className="w-3 h-3 mr-1"/> 需申请
-                 </span>
-              )}
+          {/* 底部信息区 */}
+          <div className="mt-auto pt-6 border-t border-gray-50 flex flex-col space-y-3 relative z-10">
+            <div className="flex items-center text-gray-600 font-medium text-sm">
+              <div className="w-7 h-7 rounded-full bg-gray-50 flex items-center justify-center mr-3"><BookOpen className="w-4 h-4 text-gray-400" /></div>
+              {profile.major || '未填写专业'}
             </div>
-            
-            <div className="flex flex-col space-y-2.5 mb-4">
-              <div className="flex items-center text-gray-700 font-medium text-sm">
-                <div className="w-6 flex justify-center"><BookOpen className="w-4 h-4 text-purple-400" /></div>
-                <span>{profile.major || '未填写专业'}</span>
-              </div>
-              <div className="flex items-center text-gray-700 font-medium text-sm">
-                <div className="w-6 flex justify-center"><User className="w-4 h-4 text-blue-400" /></div>
-                <span>{profile.height || '?'} cm • {profile.weight || '?'} kg</span>
-              </div>
+            <div className="flex items-center text-gray-600 font-medium text-sm">
+              <div className="w-7 h-7 rounded-full bg-gray-50 flex items-center justify-center mr-3"><MapPin className="w-4 h-4 text-gray-400" /></div>
+              {profile.location || '紫荆校园'}
             </div>
-
-            <div className="flex flex-wrap gap-2">
-              {(profile.tagMode || []).map(tag => (
-                <span key={tag} className="px-3 py-1 bg-gray-50 text-gray-600 rounded-lg text-xs font-bold border border-gray-100">
-                  {tag}
-                </span>
-              ))}
-            </div>
-
-            <div className="absolute bottom-4 left-0 w-full flex justify-center text-xs text-gray-400 animate-pulse">
-               点击卡片查看详细灵魂问卷
+            <div className="flex flex-wrap gap-2 pt-2">
+              {(() => {
+                const tagsToDisplay = (profile.tagMode || []).filter(t => t !== '其他');
+                if ((profile.tagMode || []).includes('其他') && profile.customTag) {
+                  tagsToDisplay.push(profile.customTag);
+                }
+                if (tagsToDisplay.length === 0) {
+                  return <span className="text-xs text-gray-400">还没有添加属性标签哦</span>;
+                }
+                return tagsToDisplay.map((tag, idx) => (
+                  <span key={idx} className="px-3 py-1.5 bg-purple-50 text-purple-700 rounded-xl text-xs font-bold border border-purple-100">
+                    {tag}
+                  </span>
+                ));
+              })()}
             </div>
           </div>
         </div>
@@ -859,16 +842,20 @@ const renderAuth = () => {
 
   const renderProfileModal = () => {
     if (!viewedProfile) return null;
+    const pName = viewedProfile.name || '?';
+    const themeColor = viewedProfile.color || 'from-purple-500 to-pink-500';
+
     return (
       <div className="absolute inset-0 bg-white z-50 flex flex-col animate-in slide-in-from-bottom duration-300 overflow-hidden">
-        <div className="relative h-64 bg-gray-900 flex-shrink-0">
-           {viewedProfile.avatarUrl && <img src={viewedProfile.avatarUrl} className="w-full h-full object-cover opacity-60" />}
-           <button onClick={() => setViewedProfile(null)} className="absolute top-6 left-4 p-2 bg-black/30 backdrop-blur-md rounded-full text-white hover:bg-black/50 transition">
+        {/* 全新弹窗顶部渐变横幅 */}
+        <div className={`relative h-64 bg-gradient-to-br ${themeColor} flex-shrink-0 flex items-center justify-center overflow-hidden`}>
+           <span className="text-[12rem] font-black text-white opacity-10 absolute">{pName[0]}</span>
+           <button onClick={() => setViewedProfile(null)} className="absolute top-6 left-4 p-2 bg-black/20 backdrop-blur-md rounded-full text-white hover:bg-black/40 transition">
              <ChevronLeft className="w-6 h-6" />
            </button>
-           <div className="absolute bottom-4 left-4 text-white">
-             <h2 className="text-3xl font-black">{viewedProfile.name || '?'}</h2>
-             <p className="opacity-80 mt-1">{viewedProfile.major || '未填写专业'}</p>
+           <div className="absolute bottom-4 left-4 text-white z-10">
+             <h2 className="text-3xl font-black drop-shadow-md">{pName}</h2>
+             <p className="opacity-90 mt-1 font-medium">{viewedProfile.major || '未填写专业'}</p>
            </div>
         </div>
         
@@ -929,7 +916,6 @@ const renderAuth = () => {
                     showToast('成功获取您的精确位置！');
                   },
                   (error) => {
-                    // 优化定位失败的错误提示
                     let errorMsg = '定位失败，启用清华默认坐标';
                     if (error.code === 1) errorMsg = '您拒绝了定位权限，已启用默认坐标';
                     if (error.code === 2 || error.code === 3) errorMsg = '测试环境/网络限制定位，已启用默认坐标';
@@ -977,14 +963,12 @@ const renderAuth = () => {
   };
 
   const renderMessages = () => {
-    // 动态提取：只要你们聊过天，不管有没有配对，都在列表里显示
     const chattedUserIds = new Set(
       allMessages
         .filter(m => m.senderId === currentUser?.uid || m.receiverId === currentUser?.uid)
         .map(m => m.senderId === currentUser?.uid ? String(m.receiverId) : String(m.senderId))
     );
 
-    // 合并：划卡匹配成功的人 + 已经聊过天的人
     const chatListProfiles = displayProfiles.filter(p =>
       matches.some(m => m.id === p.id) || chattedUserIds.has(String(p.id))
     );
@@ -999,20 +983,16 @@ const renderAuth = () => {
             <div className="space-y-4">
               {chatListProfiles.map(match => {
                 const pName = match.name || '?';
-                
-                // 查找你们的最后一条消息
+                const themeColor = match.color || 'from-blue-400 to-blue-600';
                 const chatId = [String(currentUser?.uid), String(match.id)].sort().join('_');
                 const chatMsgs = allMessages.filter(m => m.chatId === chatId);
                 const lastMsg = chatMsgs.length > 0 ? chatMsgs[chatMsgs.length - 1].text : '匹配成功，现在开始聊天吧！';
 
                 return (
                   <div key={match.id} onClick={() => setCurrentChatUser(match)} className="flex items-center space-x-4 p-2 hover:bg-purple-50 rounded-2xl cursor-pointer transition-colors active:scale-95">
-                    <div className={`w-14 h-14 rounded-full bg-gradient-to-br ${match.color || 'from-blue-400 to-blue-600'} flex items-center justify-center flex-shrink-0 overflow-hidden shadow-sm`}>
-                      {match.avatarUrl ? (
-                        <img src={match.avatarUrl} alt={pName} className="w-full h-full object-cover" />
-                      ) : (
-                        <span className="text-white text-xl font-bold">{pName[0]}</span>
-                      )}
+                    {/* 消息列表的头像也改为了首字母渐变 */}
+                    <div className={`w-14 h-14 rounded-full bg-gradient-to-br ${themeColor} flex items-center justify-center flex-shrink-0 overflow-hidden shadow-sm border border-white`}>
+                       <span className="text-white text-xl font-black">{pName[0]}</span>
                     </div>
                     <div className="flex-1 min-w-0">
                       <h4 className="text-base font-bold text-gray-900">{pName}</h4>
@@ -1030,31 +1010,28 @@ const renderAuth = () => {
     );
   };
 
-  // 新增：渲染完整的实时聊天界面
   const renderChatView = () => {
     if (!currentChatUser) return null;
     
-    // 过滤出当前两人之间的所有消息
     const chatId = [String(currentUser?.uid), String(currentChatUser.id)].sort().join('_');
     const chatMsgs = allMessages.filter(m => m.chatId === chatId);
+    const themeColor = currentChatUser.color || 'from-purple-400 to-pink-500';
 
     return (
       <div className="absolute inset-0 bg-gray-50 z-30 flex flex-col animate-in slide-in-from-right duration-300">
-        {/* 聊天头部栏 */}
         <div className="flex items-center justify-between px-4 py-4 bg-white border-b border-gray-100 shadow-sm z-10">
           <button onClick={() => setCurrentChatUser(null)} className="p-2 -ml-2 text-gray-600 hover:bg-gray-50 rounded-full transition">
             <ChevronLeft className="w-6 h-6" />
           </button>
           <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 rounded-full overflow-hidden bg-gradient-to-br from-purple-400 to-pink-500 shadow-sm">
-               {currentChatUser.avatarUrl ? <img src={currentChatUser.avatarUrl} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-white font-bold">{currentChatUser.name?.[0] || '?'}</div>}
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center overflow-hidden bg-gradient-to-br ${themeColor} shadow-sm border border-white`}>
+               <span className="text-white font-bold text-sm">{currentChatUser.name?.[0] || '?'}</span>
             </div>
             <h2 className="text-lg font-bold text-gray-900">{currentChatUser.name || '同学'}</h2>
           </div>
-          <div className="w-8"></div> {/* 占位符以居中 */}
+          <div className="w-8"></div> 
         </div>
 
-        {/* 聊天消息滚动区 */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-[#f4f7f6]">
           {chatMsgs.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-gray-400 opacity-60">
@@ -1077,10 +1054,9 @@ const renderAuth = () => {
               )
             })
           )}
-          <div ref={chatEndRef} /> {/* 自动滚动锚点 */}
+          <div ref={chatEndRef} />
         </div>
 
-        {/* 底部输入框 */}
         <div className="p-4 bg-white border-t border-gray-100">
           <div className="flex items-center space-x-2 relative">
             <input
@@ -1107,43 +1083,26 @@ const renderAuth = () => {
   const renderProfile = () => {
     return (
       <div className="h-full flex flex-col items-center pt-8 overflow-y-auto pb-6">
-        <div className="w-full flex justify-end px-4 mb-4">
+        <div className="w-full flex justify-end px-4 mb-2">
           <Settings className="w-6 h-6 text-gray-400 cursor-pointer" />
         </div>
         
-        <div className="relative mb-6 cursor-pointer group" onClick={() => fileInputRef.current.click()}>
-          <div className="w-32 h-32 rounded-full bg-gradient-to-tr from-purple-600 to-pink-500 p-1 shadow-xl">
-            <div className="w-full h-full bg-white rounded-full flex items-center justify-center overflow-hidden border-4 border-white relative">
-              {userProfile.avatarUrl ? (
-                <img src={userProfile.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
-              ) : (
-                <User className="w-16 h-16 text-purple-200" />
-              )}
-              <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                 <Camera className="w-8 h-8 text-white" />
-              </div>
-            </div>
-          </div>
-          <div className="absolute bottom-0 right-0 bg-white p-2 rounded-full shadow-lg border border-gray-100 text-purple-600">
-            <Camera className="w-4 h-4" />
-          </div>
-          <input 
-            type="file" 
-            ref={fileInputRef} 
-            onChange={handleAvatarUpload} 
-            accept="image/*" 
-            className="hidden" 
-          />
+        {/* 全新设计的头像替代品：高级渐变首字母徽标 */}
+        <div className="w-28 h-28 rounded-[2rem] bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center mb-6 shadow-inner border-2 border-white transform rotate-3">
+           <span className="text-6xl font-black text-transparent bg-clip-text bg-gradient-to-tr from-purple-600 to-pink-500 -rotate-3">
+             {userProfile.name?.[0] || '?'}
+           </span>
         </div>
 
-        <div className="flex items-center space-x-2 mb-1">
+        {/* 名字显示区 */}
+        <div className="flex items-center space-x-3 mb-2">
           {isEditingName ? (
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-2 bg-gray-50 px-4 py-2 rounded-2xl border border-gray-200">
               <input 
                 type="text" 
                 value={tempName}
                 onChange={(e) => setTempName(e.target.value)}
-                className="text-2xl font-bold text-gray-900 border-b-2 border-purple-500 focus:outline-none bg-transparent w-32 text-center"
+                className="text-2xl font-black text-gray-900 focus:outline-none bg-transparent w-32 text-center"
                 autoFocus
               />
               <button 
@@ -1151,43 +1110,36 @@ const renderAuth = () => {
                   setUserProfile({...userProfile, name: tempName});
                   setIsEditingName(false);
                 }}
-                className="bg-purple-100 p-1.5 rounded-full text-purple-700"
+                className="bg-purple-600 p-2 rounded-full text-white shadow-md active:scale-95"
               >
                 <Check className="w-4 h-4" />
               </button>
             </div>
           ) : (
-            <>
-              <h2 className="text-2xl font-bold text-gray-900">{userProfile.name}</h2>
-              <button onClick={() => setIsEditingName(true)} className="text-gray-400 hover:text-purple-600">
-                <Edit2 className="w-4 h-4" />
+            <div className="flex items-center space-x-2">
+              <h2 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-gray-900 to-gray-600 tracking-tight">
+                {userProfile.name}
+              </h2>
+              <button onClick={() => setIsEditingName(true)} className="text-gray-300 hover:text-purple-600 transition-colors p-1">
+                <Edit2 className="w-5 h-5" />
               </button>
-            </>
+            </div>
           )}
         </div>
 
-        <p className="text-purple-600 font-medium mb-6">清华大学 • {userProfile.major}</p>
+        <p className="text-purple-600 font-bold mb-8 tracking-widest text-sm bg-purple-50 px-4 py-1.5 rounded-full">清华大学 • {userProfile.major}</p>
 
-        <div className="w-full px-4 space-y-3">
-          <button 
-            onClick={() => setCurrentView('editProfile')}
-            className="w-full py-4 bg-white rounded-2xl shadow-sm border border-gray-50 text-left px-6 font-medium text-gray-700 flex justify-between items-center hover:bg-gray-50"
-          >
-            编辑个人资料
-            <span className="text-gray-300">›</span>
+        {/* 底部按钮组 */}
+        <div className="w-full px-5 space-y-3">
+          <button onClick={() => setCurrentView('editProfile')} className="w-full py-4 bg-white rounded-2xl shadow-sm border border-gray-100 text-left px-6 font-bold text-gray-700 flex justify-between items-center hover:bg-gray-50 active:scale-[0.98] transition-all">
+            编辑个人档案 <span className="text-gray-300">›</span>
           </button>
           
-          <button 
-            onClick={() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }}
-            className="w-full py-4 bg-white rounded-2xl shadow-sm border border-gray-50 text-left px-6 font-medium text-purple-600 flex justify-between items-center hover:bg-gray-50"
-          >
-            {copied ? "✅ 链接已复制" : "🔗 分享网站给同学"}
+          <button onClick={() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }} className="w-full py-4 bg-white rounded-2xl shadow-sm border border-gray-100 text-left px-6 font-bold text-purple-600 flex justify-between items-center hover:bg-gray-50 active:scale-[0.98] transition-all">
+            {copied ? "✅ 链接已复制" : "🔗 邀请同学加入"}
           </button>
           
-          <button 
-            onClick={() => { setIsAuthenticated(false); setAuthStep('email'); setCode(''); }}
-            className="w-full py-4 bg-red-50 rounded-2xl text-red-600 font-bold flex justify-center items-center mt-4"
-          >
+          <button onClick={() => { setIsAuthenticated(false); setAuthMode('login'); }} className="w-full py-4 bg-red-50/50 rounded-2xl text-red-500 font-bold flex justify-center items-center mt-6 active:scale-[0.98] transition-all">
             退出登录
           </button>
         </div>
@@ -1204,8 +1156,8 @@ const renderAuth = () => {
           </button>
           <h2 className="text-lg font-bold text-gray-900">编辑个人资料</h2>
           <button 
-            onClick={() => setCurrentView('main')} 
-            className="text-purple-600 font-bold text-sm"
+            onClick={handleSaveProfileInfo} 
+            className="text-purple-600 font-bold text-sm active:scale-95 transition-transform"
           >
             完成
           </button>
@@ -1339,7 +1291,7 @@ const renderAuth = () => {
         {currentView === 'editProfile' ? renderEditProfile() : (
           <>
             {renderToast()}
-            {renderChatView()} {/* 新增：聊天界面模态框覆盖在最上层 */}
+            {renderChatView()} 
 
             <header className="px-5 pt-8 pb-3 flex justify-between items-center bg-gray-50 z-10">
               <div className="flex items-center space-x-2">
@@ -1362,12 +1314,7 @@ const renderAuth = () => {
             <nav className="h-[80px] sm:h-20 bg-white border-t border-gray-100 flex justify-around items-center px-2 pb-6 sm:pb-2 z-10 sm:rounded-b-[2rem]">
               <button onClick={() => setActiveTab('discover')} className={`flex flex-col items-center space-y-1 w-1/5 ${activeTab === 'discover' ? 'text-purple-600' : 'text-gray-400'}`}><Sparkles className="w-6 h-6" /><span className="text-[10px] font-bold transform scale-90">探索</span></button>
               <button onClick={() => setActiveTab('nearby')} className={`flex flex-col items-center space-y-1 w-1/5 ${activeTab === 'nearby' ? 'text-blue-500' : 'text-gray-400'}`}><MapIcon className="w-6 h-6" /><span className="text-[10px] font-bold transform scale-90">附近</span></button>
-              
-              <button onClick={() => setActiveTab('match')} className={`flex flex-col items-center space-y-1 w-1/5 ${activeTab === 'match' ? 'text-pink-500' : 'text-gray-400'}`}>
-                <ClipboardEdit className="w-6 h-6" />
-                <span className="text-[10px] font-bold transform scale-90">匹配</span>
-              </button>
-              
+              <button onClick={() => setActiveTab('match')} className={`flex flex-col items-center space-y-1 w-1/5 ${activeTab === 'match' ? 'text-pink-500' : 'text-gray-400'}`}><ClipboardEdit className="w-6 h-6" /><span className="text-[10px] font-bold transform scale-90">匹配</span></button>
               <button onClick={() => setActiveTab('messages')} className={`flex flex-col items-center space-y-1 relative w-1/5 ${activeTab === 'messages' ? 'text-purple-600' : 'text-gray-400'}`}><MessageCircle className="w-6 h-6" /><span className="text-[10px] font-bold transform scale-90">消息</span></button>
               <button onClick={() => setActiveTab('profile')} className={`flex flex-col items-center space-y-1 w-1/5 ${activeTab === 'profile' ? 'text-purple-600' : 'text-gray-400'}`}><User className="w-6 h-6" /><span className="text-[10px] font-bold transform scale-90">我的</span></button>
             </nav>
