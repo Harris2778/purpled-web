@@ -321,27 +321,60 @@ export default function App() {
 
   const handleSaveToCloud = async () => {
     if (!currentUser || !db) return showToast('未登录或云数据库未连接，保存失败');
-    try {
-      const profileRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', currentUser.uid);
-      await setDoc(profileRef, {
-        name: userProfile.name,
-        age: userProfile.age,
-        major: userProfile.major,
-        location: "紫荆校园",
-        height: userProfile.height,
-        weight: userProfile.weight,
-        tagMode: userProfile.tagMode,
-        avatarUrl: userProfile.avatarUrl || "https://api.dicebear.com/7.x/avataaars/svg?seed=" + currentUser.uid,
-        color: "from-blue-400 to-purple-500", 
-        matchScore: Math.floor(Math.random() * 15) + 85, 
-        isPublic: isQaPublic,
-        answers: qaAnswers,
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
-      showToast('资料保存成功！已同步至云端匹配大厅');
-    } catch (error) {
-      console.error(error);
-      showToast('保存失败，请检查网络');
+
+    // 定义一个内部保存逻辑：接收真实的或默认的经纬度作为“基准点”
+    const saveWithLocation = async (baseLat, baseLng) => {
+      // 核心秘籍：在基准点上加上随机偏移量（保护隐私 + 防止头像重叠）
+      const finalLat = baseLat + (Math.random() - 0.5) * 0.005;
+      const finalLng = baseLng + (Math.random() - 0.5) * 0.005;
+
+      try {
+        const profileRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', currentUser.uid);
+        await setDoc(profileRef, {
+          name: userProfile.name,
+          age: userProfile.age,
+          major: userProfile.major,
+          location: "紫荆校园", // 这里保持文字，用于卡片上的 UI 显示
+          // --- 写入最终计算好的坐标 ---
+          latitude: finalLat,  
+          longitude: finalLng, 
+          // ----------------------------
+          height: userProfile.height,
+          weight: userProfile.weight,
+          tagMode: userProfile.tagMode,
+          avatarUrl: userProfile.avatarUrl || "https://api.dicebear.com/7.x/avataaars/svg?seed=" + currentUser.uid,
+          color: "from-blue-400 to-purple-500", 
+          matchScore: Math.floor(Math.random() * 15) + 85, 
+          isPublic: isQaPublic,
+          answers: qaAnswers,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+        showToast('资料保存成功！已同步至云端匹配大厅');
+      } catch (error) {
+        console.error("保存失败详情:", error);
+        showToast('保存失败：' + error.message);
+      }
+    };
+
+    showToast('正在获取定位并保存...');
+
+    // 尝试获取真实GPS
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          // 获取成功：使用用户的真实 GPS 作为基准点
+          saveWithLocation(position.coords.latitude, position.coords.longitude);
+        },
+        (error) => {
+          // 获取失败（用户拒绝授权或没信号）：使用紫荆公寓作为默认基准点
+          console.warn("定位获取失败，使用默认坐标", error);
+          saveWithLocation(40.002, 116.326);
+        },
+        { timeout: 5000, enableHighAccuracy: true }
+      );
+    } else {
+      // 浏览器不支持：直接使用默认基准点
+      saveWithLocation(40.002, 116.326);
     }
   };
 
