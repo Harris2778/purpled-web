@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Heart, X, MessageCircle, User, Sparkles, MapPin, BookOpen, Search, Settings, Mail, ArrowRight, LogOut, Map as MapIcon, Navigation, Edit2, ChevronLeft, Check, ClipboardEdit, Lock, Unlock, Percent, AlertCircle } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, signOut } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, onSnapshot, query, getDoc, getDocs } from 'firebase/firestore';
+import { getFirestore, collection, doc, setDoc, updateDoc, onSnapshot, query, getDoc, getDocs } from 'firebase/firestore';
 
 // ----------------------------------------------------
 // 1. Firebase 钥匙配置
@@ -28,7 +28,6 @@ const appId = 'purpled-thu-v1'; // 应用ID
 const TAG_OPTIONS = ['1', '0', 's', 'm', 'side', '其他'];
 const MBTI_OPTIONS = ['INTJ','INTP','ENTJ','ENTP','INFJ','INFP','ENFJ','ENFP','ISTJ','ISFJ','ESTJ','ESFJ','ISTP','ISFP','ESTP','ESFP'];
 
-// 清华大学标准化专业/学院列表
 const MAJOR_OPTIONS = [
   "安全科学学院", "材料学院", "出土文献研究与保护中心", "低碳能源实验室", "电机工程与应用电子技术系", "笃实书院", "法学院", "高等研究院", 
   "工程物理系", "公共管理学院", "国际与地区研究院", "国家卓越工程师学院", "航空发动机研究院", "航天航空学院", "核能与新能源技术研究院", 
@@ -84,6 +83,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('discover'); 
   const [currentView, setCurrentView] = useState('main'); 
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [matches, setMatches] = useState([]);
   const [showMatchAnim, setShowMatchAnim] = useState(false);
   const [copied, setCopied] = useState(false);
   
@@ -106,37 +106,70 @@ export default function App() {
   const chatEndRef = useRef(null); 
 
   const [userProfile, setUserProfile] = useState({
-    name: '清华学子',
-    gender: '男',
-    age: '20',
-    major: '计算机科学与技术系',
-    grade: '大二',
-    height: '178',
-    weight: '65',
-    tagMode: ['side'], 
-    customTag: '' 
+    name: '清华学子', gender: '男', age: '20', major: '计算机科学与技术系',
+    grade: '大二', height: '178', weight: '65', tagMode: ['side'], customTag: '' 
   });
   const [qaAnswers, setQaAnswers] = useState({});
   const [isQaPublic, setIsQaPublic] = useState(true);
 
   const answeredCount = MATCH_QUESTIONS.filter(q => {
     const ans = qaAnswers[q.id];
-    if (Array.isArray(ans)) return ans.length > 0;
-    return ans !== undefined && ans !== '';
+    return Array.isArray(ans) ? ans.length > 0 : (ans !== undefined && ans !== '');
   }).length;
   const progressPercent = Math.round((answeredCount / MATCH_QUESTIONS.length) * 100);
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [tempName, setTempName] = useState(userProfile.name);
 
-  // 每次收到新消息时自动滚动到底部
+  // ----------------------------------------------------
+  // 红点状态计算与消息已读处理
+  // ----------------------------------------------------
+  const hasUnread = allMessages.some(m => m.receiverId === currentUser?.uid && !m.read) || 
+                    allRequests.some(r => r.receiverId === currentUser?.uid && r.status === 'pending');
+
   useEffect(() => {
     if (currentChatUser && chatEndRef.current) {
       chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [allMessages, currentChatUser]);
 
-  // 全局通知系统：监听权限状态的变化（实时弹出同意/拒绝提示）
+  // 当进入聊天界面时，将发给自己的消息标记为已读
+  useEffect(() => {
+    if (currentChatUser && currentUser && db) {
+      const chatId = [String(currentUser.uid), String(currentChatUser.id)].sort().join('_');
+      const unreadMsgs = allMessages.filter(m => m.chatId === chatId && m.receiverId === currentUser.uid && !m.read);
+      unreadMsgs.forEach(m => {
+        updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'messages', m.id), { read: true }).catch(console.error);
+      });
+    }
+  }, [currentChatUser, allMessages, currentUser, db]);
+
+  // ----------------------------------------------------
+  // 社交链计算：拉黑与取关
+  // ----------------------------------------------------
+  const blockedUids = new Set();
+  allRequests.forEach(r => {
+      if (r.type === 'block') {
+          if (r.senderId === currentUser?.uid) blockedUids.add(r.receiverId);
+          if (r.receiverId === currentUser?.uid) blockedUids.add(r.senderId);
+      }
+  });
+
+  // 全局过滤掉被拉黑的用户
+  const displayProfiles = realUsers.filter(p => !blockedUids.has(p.id));
+
+  // 计算已取关的用户（最新的一条关系是 unfriend）
+  const unfriendedUids = new Set();
+  displayProfiles.forEach(p => {
+      const reqs = allRequests.filter(r => ['add_friend', 'like', 'unfriend'].includes(r.type) && 
+        ((r.senderId === currentUser?.uid && r.receiverId === p.id) || (r.senderId === p.id && r.receiverId === currentUser?.uid))
+      ).sort((a,b) => b.timestamp - a.timestamp);
+      if (reqs.length > 0 && reqs[0].type === 'unfriend') {
+          unfriendedUids.add(p.id);
+      }
+  });
+
+  // 全局通知系统
   const prevReqsRef = useRef();
   useEffect(() => {
     if (!currentUser || allRequests.length === 0) return;
@@ -160,7 +193,7 @@ export default function App() {
   }, [allRequests, currentUser]);
 
   // ----------------------------------------------------
-  // 初始化全局 Leaflet 地图脚本资源
+  // 地图脚本加载
   // ----------------------------------------------------
   useEffect(() => {
     if (document.getElementById('leaflet-script')) {
@@ -183,9 +216,7 @@ export default function App() {
       script.onload = () => setIsMapLoaded(true);
       script.onerror = (e) => console.error("Leaflet script failed to load", e);
       document.head.appendChild(script);
-    } catch (err) {
-      console.error("Map resource load error:", err);
-    }
+    } catch (err) { console.error(err); }
   }, []);
 
   // ----------------------------------------------------
@@ -193,9 +224,7 @@ export default function App() {
   // ----------------------------------------------------
   useEffect(() => {
     if (!auth) return;
-    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-      setCurrentUser(user);
-    });
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => { setCurrentUser(user); });
     return () => unsubscribeAuth();
   }, []);
 
@@ -205,13 +234,9 @@ export default function App() {
       const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'profiles'));
       const unsubscribeDB = onSnapshot(q, (snapshot) => {
         const profiles = [];
-        snapshot.forEach((docSnap) => {
-          if (docSnap.id !== currentUser.uid) { 
-            profiles.push({ id: docSnap.id, ...docSnap.data() });
-          }
-        });
+        snapshot.forEach((docSnap) => { if (docSnap.id !== currentUser.uid) profiles.push({ id: docSnap.id, ...docSnap.data() }); });
         setRealUsers(profiles);
-      }, (error) => console.error(error));
+      }, console.error);
       return () => unsubscribeDB();
     } catch (err) { console.error(err); }
   }, [currentUser]);
@@ -225,7 +250,7 @@ export default function App() {
         snapshot.forEach((docSnap) => msgs.push({ id: docSnap.id, ...docSnap.data() }));
         msgs.sort((a, b) => a.timestamp - b.timestamp);
         setAllMessages(msgs);
-      }, (error) => console.error(error));
+      }, console.error);
       return () => unsubscribeMsg();
     } catch (err) { console.error(err); }
   }, [currentUser]);
@@ -238,7 +263,7 @@ export default function App() {
         const reqs = [];
         snapshot.forEach((docSnap) => reqs.push({ id: docSnap.id, ...docSnap.data() }));
         setAllRequests(reqs);
-      }, (error) => console.error(error));
+      }, console.error);
       return () => unsubscribeReq();
     } catch (err) { console.error(err); }
   }, [currentUser]);
@@ -255,40 +280,22 @@ export default function App() {
           if (myData.answers) setQaAnswers(myData.answers); 
           if (myData.name) setTempName(myData.name); 
         }
-      } catch (error) { console.error("拉取资料失败", error); }
+      } catch (error) { console.error(error); }
     };
     fetchMyProfile();
   }, [currentUser, db]);
 
-  const displayProfiles = realUsers;
-
   // ----------------------------------------------------
-  // 全局工具与操作逻辑
+  // 核心交互工具逻辑
   // ----------------------------------------------------
-  const showToast = (msg) => {
-    setToastMsg(msg);
-    setTimeout(() => setToastMsg(''), 2500);
-  };
-
+  const showToast = (msg) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 2500); };
   const checkTsinghuaEmail = (em) => em.endsWith('@mails.tsinghua.edu.cn') || em.endsWith('@tsinghua.edu.cn');
 
   const handleLogout = async () => {
-    try {
-      if (auth) await signOut(auth);
-    } catch (error) { console.error("登出失败", error); }
-    
-    setIsAuthenticated(false);
-    setAuthMode('login');
-    setEmail('');
-    setPassword('');
-    setUsername('');
-    setUserProfile({
-      name: '清华学子', gender: '男', age: '20', major: '计算机科学与技术系',
-      grade: '大二', height: '178', weight: '65', tagMode: ['side'], customTag: ''
-    });
-    setQaAnswers({});
-    setCurrentChatUser(null);
-    setViewedProfile(null);
+    try { if (auth) await signOut(auth); } catch (error) { console.error(error); }
+    setIsAuthenticated(false); setAuthMode('login'); setEmail(''); setPassword(''); setUsername('');
+    setUserProfile({ name: '清华学子', gender: '男', age: '20', major: '计算机科学与技术系', grade: '大二', height: '178', weight: '65', tagMode: ['side'], customTag: '' });
+    setQaAnswers({}); setCurrentChatUser(null); setViewedProfile(null);
   };
 
   const handleRegister = async () => {
@@ -296,16 +303,11 @@ export default function App() {
     if (!checkTsinghuaEmail(email)) return setAuthError('必须使用清华大学教育邮箱');
     if (password.length < 6) return setAuthError('密码至少需要 6 位');
     setAuthError('');
-
     try {
       showToast('正在验证用户名...');
-      const profilesRef = collection(db, 'artifacts', appId, 'public', 'data', 'profiles');
-      const profilesSnap = await getDocs(profilesRef);
+      const profilesSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'profiles'));
       let isNameTaken = false;
-      profilesSnap.forEach(doc => {
-        if (doc.data().name === username.trim()) isNameTaken = true;
-      });
-
+      profilesSnap.forEach(doc => { if (doc.data().name === username.trim()) isNameTaken = true; });
       if (isNameTaken) return setAuthError('该用户名已被抢先使用，请换一个');
 
       showToast('正在为您注册...');
@@ -346,8 +348,7 @@ export default function App() {
       const finalLat = baseLat + (Math.random() - 0.5) * 0.005;
       const finalLng = baseLng + (Math.random() - 0.5) * 0.005;
       try {
-        const profileRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', currentUser.uid);
-        await setDoc(profileRef, {
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'profiles', currentUser.uid), {
           name: userProfile.name, age: userProfile.age, major: userProfile.major, location: "紫荆校园", 
           latitude: finalLat, longitude: finalLng, height: userProfile.height, weight: userProfile.weight,
           tagMode: userProfile.tagMode, customTag: userProfile.customTag || '', matchScore: Math.floor(Math.random() * 15) + 85, 
@@ -363,17 +364,14 @@ export default function App() {
         () => saveWithLocation(40.002, 116.326),
         { timeout: 5000, enableHighAccuracy: true }
       );
-    } else {
-      saveWithLocation(40.002, 116.326);
-    }
+    } else saveWithLocation(40.002, 116.326);
   };
 
   const handleSaveProfileInfo = async () => {
     if (!currentUser || !db) { setCurrentView('main'); return; }
     try {
       showToast('正在保存个人资料...');
-      const profileRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', currentUser.uid);
-      await setDoc(profileRef, {
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'profiles', currentUser.uid), {
         gender: userProfile.gender || '男', age: userProfile.age || '20', major: userProfile.major || '未选择',
         height: userProfile.height || '', weight: userProfile.weight || '', tagMode: userProfile.tagMode || [],
         customTag: userProfile.customTag || '', updatedAt: new Date().toISOString()
@@ -383,66 +381,70 @@ export default function App() {
     } catch (error) { showToast('保存失败'); }
   };
 
-  // 请求系统：发送申请 (查看问卷/关注/加好友)
+  // 请求系统发送引擎
   const handleSendRequest = async (targetId, type) => {
     if (!currentUser || !db) return;
-
     if (type === 'view_qa') {
       const targetProfile = displayProfiles.find(p => p.id === targetId);
       if (!targetProfile || !targetProfile.answers || Object.keys(targetProfile.answers).length === 0) {
         return showToast("对方尚未填写匹配问卷");
       }
     }
-
     const existingReq = allRequests.find(r => r.senderId === currentUser.uid && r.receiverId === targetId && r.type === type);
     if (existingReq) {
       if (existingReq.status === 'pending') return showToast("已发送过申请，正在等待对方同意");
       if (existingReq.status === 'accepted') return showToast(type === 'view_qa' ? "对方已对你公开问卷" : "你们已经是好友了");
     }
-
     try {
-      const reqRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'requests'));
-      await setDoc(reqRef, {
+      await setDoc(doc(collection(db, 'artifacts', appId, 'public', 'data', 'requests')), {
         senderId: currentUser.uid, receiverId: targetId, type: type, status: 'pending', timestamp: Date.now()
       });
       if (type === 'view_qa') showToast("已向对方发送问卷查看申请");
       else if (type === 'add_friend') showToast("已向对方发送好友申请");
       else if (type === 'like') showToast("已发送关注申请，等待对方回应");
-    } catch (error) {
-      showToast("申请发送失败，请检查网络");
-    }
+    } catch (error) { showToast("申请发送失败，请检查网络"); }
   };
 
-  // 请求系统：处理收到的申请（同意/拒绝）
+  // 拉黑与取关处理引擎
+  const handleBlockUser = async (targetId) => {
+    if (!currentUser || !db) return;
+    try {
+        await setDoc(doc(collection(db, 'artifacts', appId, 'public', 'data', 'requests')), { senderId: currentUser.uid, receiverId: targetId, type: 'block', status: 'completed', timestamp: Date.now() });
+        showToast("已拉黑该用户，不再为您显示");
+        setViewedProfile(null);
+        setCurrentChatUser(null);
+    } catch(e) { showToast("拉黑失败"); }
+  };
+
+  const handleUnfriendUser = async (targetId) => {
+    if (!currentUser || !db) return;
+    try {
+        await setDoc(doc(collection(db, 'artifacts', appId, 'public', 'data', 'requests')), { senderId: currentUser.uid, receiverId: targetId, type: 'unfriend', status: 'completed', timestamp: Date.now() });
+        showToast("已解除好友关系/取消关注");
+        setViewedProfile(null);
+        setCurrentChatUser(null);
+    } catch(e) { showToast("操作失败"); }
+  };
+
   const handleProcessRequest = async (reqId, newStatus) => {
     if (!db) return;
-    try {
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'requests', reqId), {
-        status: newStatus
-      }, { merge: true });
-    } catch (e) { showToast("操作失败"); }
+    try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'requests', reqId), { status: newStatus }, { merge: true }); } 
+    catch (e) { showToast("操作失败"); }
   };
 
-  // 划卡功能：点赞 (心)
   const handleLike = async () => {
     if (currentIndex >= displayProfiles.length) return;
     const targetId = displayProfiles[currentIndex].id;
     
-    // 拦截判断：对方是否曾经Pass了我，或者拒绝了我的Like申请
-    const didTargetReject = allRequests.some(r => 
-        (r.senderId === targetId && r.receiverId === currentUser.uid && r.type === 'pass') || 
-        (r.senderId === currentUser.uid && r.receiverId === targetId && r.status === 'rejected')
-    );
+    const didTargetReject = allRequests.some(r => (r.senderId === targetId && r.receiverId === currentUser.uid && r.type === 'pass') || (r.senderId === currentUser.uid && r.receiverId === targetId && r.status === 'rejected'));
     if (didTargetReject) {
         showToast('对方拒绝了你的关注申请');
         setCurrentIndex(prev => prev + 1);
         return;
     }
 
-    // 匹配判断：对方是否已经点赞了我
     const targetLikeReq = allRequests.find(r => r.senderId === targetId && r.receiverId === currentUser.uid && r.type === 'like');
     if (targetLikeReq && targetLikeReq.status === 'pending') {
-        // 双向奔赴：同意对方的Like请求
         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'requests', targetLikeReq.id), { status: 'accepted' }, { merge: true });
         setShowMatchAnim(true);
         setTimeout(() => { setShowMatchAnim(false); setCurrentIndex(prev => prev + 1); }, 1500);
@@ -451,21 +453,15 @@ export default function App() {
         setCurrentIndex(prev => prev + 1);
         return;
     }
-
-    // 以上都不是，则发送关注申请
     await handleSendRequest(targetId, 'like');
     setCurrentIndex(prev => prev + 1);
   };
 
-  // 划卡功能：跳过 (叉号)
   const handlePass = async () => {
     if (currentIndex >= displayProfiles.length) return;
     const targetId = displayProfiles[currentIndex].id;
     try {
-        const reqRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'requests'));
-        await setDoc(reqRef, {
-            senderId: currentUser.uid, receiverId: targetId, type: 'pass', status: 'completed', timestamp: Date.now()
-        });
+        await setDoc(doc(collection(db, 'artifacts', appId, 'public', 'data', 'requests')), { senderId: currentUser.uid, receiverId: targetId, type: 'pass', status: 'completed', timestamp: Date.now() });
         setCurrentIndex(prev => prev + 1);
     } catch(e) { setCurrentIndex(prev => prev + 1); }
   };
@@ -476,8 +472,7 @@ export default function App() {
     setInputText(''); 
     try {
       const chatId = [String(currentUser.uid), String(currentChatUser.id)].sort().join('_');
-      const msgRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'messages'));
-      await setDoc(msgRef, { chatId, text, senderId: currentUser.uid, receiverId: currentChatUser.id, timestamp: Date.now() });
+      await setDoc(doc(collection(db, 'artifacts', appId, 'public', 'data', 'messages')), { chatId, text, senderId: currentUser.uid, receiverId: currentChatUser.id, timestamp: Date.now(), read: false });
     } catch (error) { showToast('发送失败'); }
   };
 
@@ -501,25 +496,12 @@ export default function App() {
     let map;
     try {
       map = window.L.map(container, { zoomControl: false, attributionControl: false }).setView(userLoc, 15);
-      window.L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
-        subdomains: ['1', '2', '3', '4'], maxZoom: 18, minZoom: 3, attribution: '© 高德地图'
-      }).addTo(map);
+      window.L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', { subdomains: ['1', '2', '3', '4'], maxZoom: 18, minZoom: 3, attribution: '© 高德地图' }).addTo(map);
 
-      // 我的位置
       const pNameInitialMe = userProfile.name ? userProfile.name[0] : '?';
-      const myIconHtml = `
-        <div class="relative flex items-center justify-center w-14 h-14 cursor-pointer" id="my-map-marker">
-          <div class="absolute w-full h-full bg-purple-500 rounded-full animate-ping opacity-50"></div>
-          <div class="absolute w-12 h-12 bg-gradient-to-br from-purple-600 to-pink-500 rounded-full shadow-2xl border-2 border-white z-10 flex items-center justify-center overflow-hidden">
-             <span class="text-2xl font-black text-white">${pNameInitialMe}</span>
-          </div>
-        </div>
-      `;
-      window.L.marker(userLoc, { icon: window.L.divIcon({ html: myIconHtml, iconSize: [56, 56], iconAnchor: [28, 28] }), zIndexOffset: 1000 })
-        .on('click', () => setViewedProfile({id: currentUser.uid, ...userProfile}))
-        .addTo(map);
+      const myIconHtml = `<div class="relative flex items-center justify-center w-14 h-14 cursor-pointer" id="my-map-marker"><div class="absolute w-full h-full bg-purple-500 rounded-full animate-ping opacity-50"></div><div class="absolute w-12 h-12 bg-gradient-to-br from-purple-600 to-pink-500 rounded-full shadow-2xl border-2 border-white z-10 flex items-center justify-center overflow-hidden"><span class="text-2xl font-black text-white">${pNameInitialMe}</span></div></div>`;
+      window.L.marker(userLoc, { icon: window.L.divIcon({ html: myIconHtml, iconSize: [56, 56], iconAnchor: [28, 28] }), zIndexOffset: 1000 }).on('click', () => setViewedProfile({id: currentUser.uid, ...userProfile})).addTo(map);
       
-      // 附近用户
       displayProfiles.forEach((profile, index) => {
         const idNum = String(profile.id).charCodeAt(0) || index;
         const latOffset = (Math.sin(idNum * 123) * 0.012);
@@ -527,21 +509,8 @@ export default function App() {
         const pNameInitial = profile.name ? profile.name[0] : '?';
         const themeColor = profile.color || 'from-blue-400 to-blue-600';
         const avatarHtml = `<span class="text-xl font-black text-white shadow-sm">${pNameInitial}</span>`;
-        const iconHtml = `
-          <div class="relative group cursor-pointer flex flex-col items-center">
-            <div class="w-12 h-12 rounded-full bg-gradient-to-br ${themeColor} p-0.5 shadow-md transform transition-transform group-hover:scale-125 z-10">
-              <div class="w-full h-full rounded-full flex items-center justify-center overflow-hidden border border-white/50">${avatarHtml}</div>
-              <div class="absolute bottom-0 right-0 w-3 h-3 bg-green-400 border-2 border-white rounded-full shadow-sm"></div>
-            </div>
-            <div class="absolute bottom-full mb-1 opacity-0 group-hover:opacity-100 transition-opacity bg-white/95 px-3 py-1.5 rounded-xl shadow-xl text-xs font-bold text-gray-800 whitespace-nowrap z-20 pointer-events-none flex items-center transform -translate-y-1">
-              ${profile.name || '?'} <span class="text-pink-500 ml-1.5 flex items-center bg-pink-50 px-1.5 py-0.5 rounded-md">${profile.matchScore || 90}%</span>
-            </div>
-          </div>
-        `;
-        // 点击地图上的头像，弹出用户的通用资料/问卷主页
-        window.L.marker([userLoc[0] + latOffset, userLoc[1] + lngOffset], { icon: window.L.divIcon({ html: iconHtml, iconSize: [48, 48], iconAnchor: [24, 24] }) })
-          .on('click', () => setViewedProfile(profile))
-          .addTo(map);
+        const iconHtml = `<div class="relative group cursor-pointer flex flex-col items-center"><div class="w-12 h-12 rounded-full bg-gradient-to-br ${themeColor} p-0.5 shadow-md transform transition-transform group-hover:scale-125 z-10"><div class="w-full h-full rounded-full flex items-center justify-center overflow-hidden border border-white/50">${avatarHtml}</div><div class="absolute bottom-0 right-0 w-3 h-3 bg-green-400 border-2 border-white rounded-full shadow-sm"></div></div><div class="absolute bottom-full mb-1 opacity-0 group-hover:opacity-100 transition-opacity bg-white/95 px-3 py-1.5 rounded-xl shadow-xl text-xs font-bold text-gray-800 whitespace-nowrap z-20 pointer-events-none flex items-center transform -translate-y-1">${profile.name || '?'} <span class="text-pink-500 ml-1.5 flex items-center bg-pink-50 px-1.5 py-0.5 rounded-md">${profile.matchScore || 90}%</span></div></div>`;
+        window.L.marker([userLoc[0] + latOffset, userLoc[1] + lngOffset], { icon: window.L.divIcon({ html: iconHtml, iconSize: [48, 48], iconAnchor: [24, 24] }) }).on('click', () => setViewedProfile(profile)).addTo(map);
       });
     } catch (err) { console.error(err); }
     return () => { if (map) map.remove(); };
@@ -560,38 +529,18 @@ export default function App() {
         </div>
       );
     }
-
     return (
       <div className="w-full h-full flex flex-col px-8 pt-16 bg-white overflow-y-auto pb-10">
-        <div className="w-16 h-16 bg-purple-600 rounded-2xl flex items-center justify-center transform rotate-12 mb-8 shadow-lg shadow-purple-500/30">
-           <span className="text-white font-black text-2xl -rotate-12">THU</span>
-        </div>
+        <div className="w-16 h-16 bg-purple-600 rounded-2xl flex items-center justify-center transform rotate-12 mb-8 shadow-lg shadow-purple-500/30"><span className="text-white font-black text-2xl -rotate-12">THU</span></div>
         <h1 className="text-3xl font-black text-gray-900 mb-2">{authMode === 'login' ? '欢迎回来' : '注册 Purpled'}</h1>
         <p className="text-gray-500 mb-8">专属于清华的男生交友社区</p>
         <div className="space-y-4">
-          {authMode === 'register' && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">用户名</label>
-              <input type="text" value={username} onChange={(e) => { setUsername(e.target.value); setAuthError(''); }} className="block w-full px-4 py-3.5 bg-gray-50 border border-gray-100 rounded-2xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-600 transition-all" />
-            </div>
-          )}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">清华邮箱</label>
-            <input type="email" value={email} onChange={(e) => { setEmail(e.target.value.toLowerCase()); setAuthError(''); }} className="block w-full px-4 py-3.5 bg-gray-50 border border-gray-100 rounded-2xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-600 transition-all" placeholder="@mails.tsinghua.edu.cn" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">密码</label>
-            <input type="password" value={password} onChange={(e) => { setPassword(e.target.value); setAuthError(''); }} className="block w-full px-4 py-3.5 bg-gray-50 border border-gray-100 rounded-2xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-600 transition-all" placeholder={authMode === 'register' ? "设置一个至少6位的密码" : "输入密码"} />
-          </div>
+          {authMode === 'register' && (<div><label className="block text-sm font-medium text-gray-700 mb-1">用户名</label><input type="text" value={username} onChange={(e) => { setUsername(e.target.value); setAuthError(''); }} className="block w-full px-4 py-3.5 bg-gray-50 border border-gray-100 rounded-2xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-600 transition-all" /></div>)}
+          <div><label className="block text-sm font-medium text-gray-700 mb-1">清华邮箱</label><input type="email" value={email} onChange={(e) => { setEmail(e.target.value.toLowerCase()); setAuthError(''); }} className="block w-full px-4 py-3.5 bg-gray-50 border border-gray-100 rounded-2xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-600 transition-all" placeholder="@mails.tsinghua.edu.cn" /></div>
+          <div><label className="block text-sm font-medium text-gray-700 mb-1">密码</label><input type="password" value={password} onChange={(e) => { setPassword(e.target.value); setAuthError(''); }} className="block w-full px-4 py-3.5 bg-gray-50 border border-gray-100 rounded-2xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-600 transition-all" placeholder={authMode === 'register' ? "设置一个至少6位的密码" : "输入密码"} /></div>
           {authError && <p className="text-sm text-red-500 font-medium">{authError}</p>}
-          <button onClick={authMode === 'login' ? handleLogin : handleRegister} className="w-full py-4 mt-2 bg-purple-600 text-white rounded-2xl font-bold shadow-lg shadow-purple-600/30 transition-all active:scale-[0.98]">
-            {authMode === 'login' ? '登录' : '同意协议并注册'}
-          </button>
-          <div className="text-center mt-6">
-            <button onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthError(''); }} className="text-sm text-gray-500 font-medium hover:text-purple-600 transition-colors">
-              {authMode === 'login' ? '没有账号？点击注册' : '已有账号？直接登录'}
-            </button>
-          </div>
+          <button onClick={authMode === 'login' ? handleLogin : handleRegister} className="w-full py-4 mt-2 bg-purple-600 text-white rounded-2xl font-bold shadow-lg shadow-purple-600/30 transition-all active:scale-[0.98]">{authMode === 'login' ? '登录' : '同意协议并注册'}</button>
+          <div className="text-center mt-6"><button onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthError(''); }} className="text-sm text-gray-500 font-medium hover:text-purple-600 transition-colors">{authMode === 'login' ? '没有账号？点击注册' : '已有账号？直接登录'}</button></div>
         </div>
       </div>
     );
@@ -622,10 +571,7 @@ export default function App() {
             );
           })}
           <div className="pt-4 space-y-4">
-            <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-gray-100 shadow-sm">
-              <div className="flex items-center space-x-3"><div className={`p-2 rounded-full ${isQaPublic ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-500'}`}>{isQaPublic ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}</div><div><p className="font-bold text-gray-900 text-sm">公开问卷资料</p><p className="text-xs text-gray-500">允许喜欢的人直接查看你的资料</p></div></div>
-              <button onClick={() => setIsQaPublic(!isQaPublic)} className={`w-12 h-6 rounded-full relative transition-colors ${isQaPublic ? 'bg-green-500' : 'bg-gray-300'}`}><div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all ${isQaPublic ? 'left-6' : 'left-0.5'}`}></div></button>
-            </div>
+            <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-gray-100 shadow-sm"><div className="flex items-center space-x-3"><div className={`p-2 rounded-full ${isQaPublic ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-500'}`}>{isQaPublic ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}</div><div><p className="font-bold text-gray-900 text-sm">公开问卷资料</p><p className="text-xs text-gray-500">允许喜欢的人直接查看你的资料</p></div></div><button onClick={() => setIsQaPublic(!isQaPublic)} className={`w-12 h-6 rounded-full relative transition-colors ${isQaPublic ? 'bg-green-500' : 'bg-gray-300'}`}><div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all ${isQaPublic ? 'left-6' : 'left-0.5'}`}></div></button></div>
             <button onClick={handleSaveToCloud} className="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-2xl font-bold shadow-lg active:scale-95 transition-transform">保存并同步至云端大厅</button>
           </div>
         </div>
@@ -687,10 +633,10 @@ export default function App() {
     const pName = viewedProfile.name || '?';
     const themeColor = viewedProfile.color || 'from-purple-500 to-pink-500';
     
-    // 逻辑判定：是否具有查看问卷权限、对方是否填了问卷、是否已经是好友
+    // 逻辑判定
     const hasAnswers = viewedProfile.answers && Object.keys(viewedProfile.answers).length > 0;
     const hasQaPermission = viewedProfile.id === currentUser?.uid || viewedProfile.isPublic || allRequests.some(r => r.senderId === currentUser?.uid && r.receiverId === viewedProfile.id && r.type === 'view_qa' && r.status === 'accepted');
-    const isFriend = viewedProfile.id === currentUser?.uid || allRequests.some(r => (r.type === 'add_friend' || r.type === 'like') && r.status === 'accepted' && ((r.senderId === currentUser?.uid && r.receiverId === viewedProfile.id) || (r.senderId === viewedProfile.id && r.receiverId === currentUser?.uid)));
+    const isFriend = viewedProfile.id === currentUser?.uid || (!unfriendedUids.has(viewedProfile.id) && allRequests.some(r => (r.type === 'add_friend' || r.type === 'like') && r.status === 'accepted' && ((r.senderId === currentUser?.uid && r.receiverId === viewedProfile.id) || (r.senderId === viewedProfile.id && r.receiverId === currentUser?.uid))));
 
     return (
       <div className="absolute inset-0 bg-gray-50 z-50 flex flex-col animate-in slide-in-from-bottom duration-300 overflow-hidden">
@@ -700,23 +646,13 @@ export default function App() {
            <div className="absolute bottom-4 left-4 text-white z-10"><h2 className="text-3xl font-black">{pName}</h2><p className="opacity-90 font-medium">{viewedProfile.major || '未选择'}</p></div>
         </div>
         <div className="flex-1 overflow-y-auto p-5 pb-20">
-          
           <div className="bg-white p-5 rounded-2xl shadow-sm space-y-5">
              <h3 className="font-black text-xl text-gray-900 border-b pb-3 flex items-center"><ClipboardEdit className="w-5 h-5 mr-2 text-purple-600" /> 灵魂档案</h3>
              
              {!hasAnswers ? (
-               <div className="flex flex-col items-center justify-center py-8 text-gray-400">
-                 <ClipboardEdit className="w-12 h-12 mb-3 opacity-20" />
-                 <p className="text-sm">对方尚未填写匹配问卷</p>
-               </div>
+               <div className="flex flex-col items-center justify-center py-8 text-gray-400"><ClipboardEdit className="w-12 h-12 mb-3 opacity-20" /><p className="text-sm">对方尚未填写匹配问卷</p></div>
              ) : !hasQaPermission ? (
-               <div className="flex flex-col items-center justify-center py-8 text-gray-400">
-                 <Lock className="w-12 h-12 mb-3 opacity-20" />
-                 <p className="text-sm mb-5">对方未公开问卷，需申请后查看</p>
-                 <button onClick={() => handleSendRequest(viewedProfile.id, 'view_qa')} className="bg-purple-100 text-purple-600 hover:bg-purple-200 px-6 py-2.5 rounded-full font-bold text-sm active:scale-95 transition-all">
-                   申请查看匹配问卷
-                 </button>
-               </div>
+               <div className="flex flex-col items-center justify-center py-8 text-gray-400"><Lock className="w-12 h-12 mb-3 opacity-20" /><p className="text-sm mb-5">对方未公开问卷，需申请后查看</p><button onClick={() => handleSendRequest(viewedProfile.id, 'view_qa')} className="bg-purple-100 text-purple-600 hover:bg-purple-200 px-6 py-2.5 rounded-full font-bold text-sm active:scale-95 transition-all">申请查看匹配问卷</button></div>
              ) : (
                MATCH_QUESTIONS.map(q => {
                  const ans = viewedProfile.answers?.[q.id];
@@ -727,13 +663,23 @@ export default function App() {
              )}
           </div>
 
-          {/* 如果不是好友，显示加好友按钮 */}
-          {!isFriend && (
-             <button onClick={() => handleSendRequest(viewedProfile.id, 'add_friend')} className="w-full py-4 mt-5 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-2xl font-bold flex items-center justify-center shadow-lg active:scale-95 transition-all">
-                <User className="w-5 h-5 mr-2"/> 申请添加对方好友
-             </button>
+          {/* 底部的申请/社交链控制按钮 */}
+          {viewedProfile.id !== currentUser?.uid && (
+            <div className="flex flex-col space-y-3 mt-8 border-t border-gray-100 pt-5">
+              {isFriend ? (
+                <button onClick={() => handleUnfriendUser(viewedProfile.id)} className="w-full py-4 bg-gray-100 text-gray-600 rounded-2xl font-bold flex items-center justify-center active:scale-95 transition-all">
+                   取消关注 / 解除好友
+                </button>
+              ) : (
+                <button onClick={() => handleSendRequest(viewedProfile.id, 'add_friend')} className="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-2xl font-bold flex items-center justify-center shadow-lg active:scale-95 transition-all">
+                   <User className="w-5 h-5 mr-2"/> 申请添加对方好友
+                </button>
+              )}
+              <button onClick={() => handleBlockUser(viewedProfile.id)} className="w-full py-4 bg-red-50 text-red-500 hover:bg-red-100 rounded-2xl font-bold flex items-center justify-center active:scale-95 transition-all">
+                 拉黑此用户
+              </button>
+            </div>
           )}
-
         </div>
       </div>
     );
@@ -766,9 +712,11 @@ export default function App() {
       .filter(r => (r.type === 'add_friend' || r.type === 'like') && r.status === 'accepted' && (r.senderId === currentUser?.uid || r.receiverId === currentUser?.uid))
       .map(r => r.senderId === currentUser?.uid ? String(r.receiverId) : String(r.senderId));
 
-    const chatListProfiles = displayProfiles.filter(p => chattedUserIds.has(String(p.id)) || acceptedFriendIds.includes(String(p.id)));
+    // 过滤掉被取关的用户 (且展示好友/聊过天/配对的人)
+    const chatListProfiles = displayProfiles.filter(p => !unfriendedUids.has(p.id) && (matches.some(m => m.id === p.id) || chattedUserIds.has(String(p.id)) || acceptedFriendIds.includes(String(p.id))));
     
-    const myPendingReqs = allRequests.filter(r => r.receiverId === currentUser?.uid && r.status === 'pending');
+    // 过滤掉已经被拉黑的用户发来的待处理请求
+    const myPendingReqs = allRequests.filter(r => r.receiverId === currentUser?.uid && r.status === 'pending' && !blockedUids.has(r.senderId));
 
     return (
       <div className="h-full flex flex-col">
@@ -783,14 +731,14 @@ export default function App() {
                    const sender = displayProfiles.find(p => p.id === req.senderId);
                    if (!sender) return null;
                    const reqLabel = req.type === 'view_qa' ? '请求查看你的匹配问卷' : req.type === 'add_friend' ? '请求添加你为好友' : '在探索页面关注了你';
-                   const acceptLabel = req.type === 'like' ? '关注' : '同意';
+                   const acceptLabel = req.type === 'like' ? '互关' : '同意';
 
                    return (
                      <div key={req.id} className="bg-white p-3 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between">
                        <div className="flex items-center space-x-3">
-                         <div className={`w-10 h-10 rounded-full bg-gradient-to-br ${sender.color || 'from-blue-400 to-blue-600'} flex items-center justify-center text-white font-black shadow-sm`}>{sender.name?.[0] || '?'}</div>
+                         <div onClick={() => setViewedProfile(sender)} className={`w-10 h-10 rounded-full bg-gradient-to-br ${sender.color || 'from-blue-400 to-blue-600'} flex items-center justify-center text-white font-black shadow-sm cursor-pointer`}>{sender.name?.[0] || '?'}</div>
                          <div>
-                           <p className="text-sm font-bold text-gray-900">{sender.name}</p>
+                           <p onClick={() => setViewedProfile(sender)} className="text-sm font-bold text-gray-900 cursor-pointer">{sender.name}</p>
                            <p className="text-xs text-purple-600 font-medium">{reqLabel}</p>
                          </div>
                        </div>
@@ -813,11 +761,15 @@ export default function App() {
                   const themeColor = match.color || 'from-blue-400 to-blue-600'; 
                   const chatId = [String(currentUser?.uid), String(match.id)].sort().join('_'); 
                   const chatMsgs = allMessages.filter(m => m.chatId === chatId); 
-                  const lastMsg = chatMsgs.length > 0 ? chatMsgs[chatMsgs.length - 1].text : '现在可以开始聊天啦！'; 
+                  const lastMsgObj = chatMsgs[chatMsgs.length - 1];
+                  const lastMsg = lastMsgObj ? lastMsgObj.text : '现在可以开始聊天啦！';
+                  const isUnread = lastMsgObj && lastMsgObj.receiverId === currentUser?.uid && !lastMsgObj.read;
+
                   return (
-                    <div key={match.id} onClick={() => setCurrentChatUser(match)} className="flex items-center space-x-4 p-3 hover:bg-purple-50 rounded-2xl cursor-pointer transition-colors active:scale-95 bg-white border border-transparent hover:border-purple-100">
-                      <div className={`w-14 h-14 rounded-full bg-gradient-to-br ${themeColor} flex items-center justify-center flex-shrink-0 shadow-sm border border-white`}><span className="text-white text-xl font-black">{match.name?.[0]}</span></div>
-                      <div className="flex-1 min-w-0"><h4 className="text-base font-bold text-gray-900">{match.name}</h4><p className="text-sm text-gray-500 truncate">{lastMsg}</p></div>
+                    <div key={match.id} onClick={() => setCurrentChatUser(match)} className="flex items-center space-x-4 p-3 hover:bg-purple-50 rounded-2xl cursor-pointer transition-colors active:scale-95 bg-white border border-transparent hover:border-purple-100 relative">
+                      {isUnread && <div className="absolute left-1 top-1/2 transform -translate-y-1/2 w-2 h-2 bg-red-500 rounded-full"></div>}
+                      <div className={`w-14 h-14 rounded-full bg-gradient-to-br ${themeColor} flex items-center justify-center flex-shrink-0 shadow-sm border border-white ml-2`}><span className="text-white text-xl font-black">{match.name?.[0]}</span></div>
+                      <div className="flex-1 min-w-0"><h4 className={`text-base font-bold ${isUnread ? 'text-gray-900' : 'text-gray-700'}`}>{match.name}</h4><p className={`text-sm truncate ${isUnread ? 'text-purple-600 font-medium' : 'text-gray-500'}`}>{lastMsg}</p></div>
                     </div>
                   )
                 })}
@@ -838,8 +790,8 @@ export default function App() {
     const themeColor = currentChatUser.color || 'from-purple-400 to-pink-500';
     return (
       <div className="absolute inset-0 bg-gray-50 z-30 flex flex-col animate-in slide-in-from-right duration-300">
-        <div className="flex items-center justify-between px-4 py-4 bg-white border-b border-gray-100 shadow-sm">
-          <button onClick={() => setCurrentChatUser(null)} className="p-2 text-gray-600"><ChevronLeft className="w-6 h-6" /></button>
+        <div className="flex items-center justify-between px-4 py-4 bg-white border-b border-gray-100 shadow-sm z-10">
+          <button onClick={() => setCurrentChatUser(null)} className="p-2 -ml-2 text-gray-600 hover:bg-gray-50 rounded-full transition"><ChevronLeft className="w-6 h-6" /></button>
           <div onClick={() => setViewedProfile(currentChatUser)} className="flex items-center space-x-2 cursor-pointer active:scale-95">
              <div className={`w-8 h-8 rounded-full flex items-center justify-center overflow-hidden bg-gradient-to-br ${themeColor} border border-white`}><span className="text-white font-bold text-sm">{currentChatUser.name?.[0]}</span></div>
              <h2 className="text-lg font-bold text-gray-900">{currentChatUser.name}</h2>
@@ -858,36 +810,18 @@ export default function App() {
 
               return (
                 <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} w-full animate-in fade-in slide-in-from-bottom-2`}>
-                  
-                  {/* 对方头像 */}
-                  {!isMe && (
-                    <div onClick={() => setViewedProfile(currentChatUser)} className={`w-9 h-9 rounded-full bg-gradient-to-br ${msgThemeColor} flex items-center justify-center flex-shrink-0 mr-3 cursor-pointer shadow-sm border border-white mt-1`}>
-                       <span className="text-white text-sm font-black">{senderProfile.name?.[0] || '?'}</span>
-                    </div>
-                  )}
-
-                  {/* 聊天气泡与时间 */}
+                  {!isMe && (<div onClick={() => setViewedProfile(currentChatUser)} className={`w-9 h-9 rounded-full bg-gradient-to-br ${msgThemeColor} flex items-center justify-center flex-shrink-0 mr-3 cursor-pointer shadow-sm border border-white mt-1`}><span className="text-white text-sm font-black">{senderProfile.name?.[0] || '?'}</span></div>)}
                   <div className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} max-w-[70%]`}>
-                    <div className={`px-4 py-2.5 rounded-2xl text-[15px] leading-relaxed shadow-sm ${isMe ? 'bg-purple-600 text-white rounded-tr-sm' : 'bg-white text-gray-800 rounded-tl-sm border border-gray-100'}`}>
-                      {msg.text}
-                    </div>
+                    <div className={`px-4 py-2.5 rounded-2xl text-[15px] leading-relaxed shadow-sm ${isMe ? 'bg-purple-600 text-white rounded-tr-sm' : 'bg-white text-gray-800 rounded-tl-sm border border-gray-100'}`}>{msg.text}</div>
                     <span className="text-[10px] text-gray-400 mt-1.5 px-1">{msgTime}</span>
                   </div>
-
-                  {/* 自己头像 */}
-                  {isMe && (
-                    <div onClick={() => setViewedProfile({id: currentUser.uid, ...userProfile})} className={`w-9 h-9 rounded-full bg-gradient-to-br ${msgThemeColor} flex items-center justify-center flex-shrink-0 ml-3 cursor-pointer shadow-sm border border-white mt-1`}>
-                       <span className="text-white text-sm font-black">{senderProfile.name?.[0] || '?'}</span>
-                    </div>
-                  )}
-
+                  {isMe && (<div onClick={() => setViewedProfile({id: currentUser.uid, ...userProfile})} className={`w-9 h-9 rounded-full bg-gradient-to-br ${msgThemeColor} flex items-center justify-center flex-shrink-0 ml-3 cursor-pointer shadow-sm border border-white mt-1`}><span className="text-white text-sm font-black">{senderProfile.name?.[0] || '?'}</span></div>)}
                 </div>
               )
             })
           )}
           <div ref={chatEndRef} />
         </div>
-
         <div className="p-4 bg-white border-t border-gray-100"><div className="flex items-center space-x-2 relative"><input type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()} placeholder="发送消息..." className="flex-1 bg-gray-50 border border-gray-200 rounded-full pl-5 pr-14 py-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" /><button onClick={handleSendMessage} disabled={!inputText.trim()} className="absolute right-1.5 w-10 h-10 bg-purple-600 rounded-full flex items-center justify-center text-white active:scale-95"><ArrowRight className="w-5 h-5" /></button></div></div>
       </div>
     );
@@ -934,14 +868,7 @@ export default function App() {
           </div>
           <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-50">
             <label className="block text-sm font-medium text-gray-500 mb-2">专业/学院</label>
-            <select 
-              value={userProfile.major} 
-              onChange={(e) => setUserProfile({...userProfile, major: e.target.value})} 
-              className="w-full bg-transparent text-gray-900 font-medium focus:outline-none"
-            >
-              <option value="" disabled>请选择所属院系...</option>
-              {MAJOR_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-            </select>
+            <select value={userProfile.major} onChange={(e) => setUserProfile({...userProfile, major: e.target.value})} className="w-full bg-transparent text-gray-900 font-medium focus:outline-none"><option value="" disabled>请选择所属院系...</option>{MAJOR_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}</select>
           </div>
           <div className="flex space-x-4">
             <div className="flex-1 bg-white rounded-2xl p-4 shadow-sm border border-gray-50"><label className="block text-sm font-medium text-gray-500 mb-2">身高 (cm)</label><input type="number" value={userProfile.height} onChange={(e) => setUserProfile({...userProfile, height: e.target.value})} className="w-full bg-transparent text-gray-900 font-medium focus:outline-none" /></div>
@@ -982,7 +909,15 @@ export default function App() {
               <button onClick={() => setActiveTab('discover')} className={`flex flex-col items-center space-y-1 w-1/5 ${activeTab === 'discover' ? 'text-purple-600' : 'text-gray-400'}`}><Sparkles className="w-6 h-6" /><span className="text-[10px] font-bold transform scale-90">探索</span></button>
               <button onClick={() => setActiveTab('nearby')} className={`flex flex-col items-center space-y-1 w-1/5 ${activeTab === 'nearby' ? 'text-blue-500' : 'text-gray-400'}`}><MapIcon className="w-6 h-6" /><span className="text-[10px] font-bold transform scale-90">附近</span></button>
               <button onClick={() => setActiveTab('match')} className={`flex flex-col items-center space-y-1 w-1/5 ${activeTab === 'match' ? 'text-pink-500' : 'text-gray-400'}`}><ClipboardEdit className="w-6 h-6" /><span className="text-[10px] font-bold transform scale-90">匹配</span></button>
-              <button onClick={() => setActiveTab('messages')} className={`flex flex-col items-center space-y-1 relative w-1/5 ${activeTab === 'messages' ? 'text-purple-600' : 'text-gray-400'}`}><MessageCircle className="w-6 h-6" /><span className="text-[10px] font-bold transform scale-90">消息</span></button>
+              
+              <button onClick={() => setActiveTab('messages')} className={`flex flex-col items-center space-y-1 relative w-1/5 ${activeTab === 'messages' ? 'text-purple-600' : 'text-gray-400'}`}>
+                <div className="relative">
+                  <MessageCircle className="w-6 h-6" />
+                  {hasUnread && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white"></span>}
+                </div>
+                <span className="text-[10px] font-bold transform scale-90">消息</span>
+              </button>
+              
               <button onClick={() => setActiveTab('profile')} className={`flex flex-col items-center space-y-1 w-1/5 ${activeTab === 'profile' ? 'text-purple-600' : 'text-gray-400'}`}><User className="w-6 h-6" /><span className="text-[10px] font-bold transform scale-90">我的</span></button>
             </nav>
           </>
