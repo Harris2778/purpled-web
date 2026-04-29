@@ -766,7 +766,7 @@ export default function App() {
       .filter(r => (r.type === 'add_friend' || r.type === 'like') && r.status === 'accepted' && (r.senderId === currentUser?.uid || r.receiverId === currentUser?.uid))
       .map(r => r.senderId === currentUser?.uid ? String(r.receiverId) : String(r.senderId));
 
-    const chatListProfiles = displayProfiles.filter(p => matches.some(m => m.id === p.id) || chattedUserIds.has(String(p.id)) || acceptedFriendIds.includes(String(p.id)));
+    const chatListProfiles = displayProfiles.filter(p => chattedUserIds.has(String(p.id)) || acceptedFriendIds.includes(String(p.id)));
     
     const myPendingReqs = allRequests.filter(r => r.receiverId === currentUser?.uid && r.status === 'pending');
 
