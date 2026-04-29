@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Heart, X, MessageCircle, User, Sparkles, MapPin, BookOpen, Search, Settings, Mail, ArrowRight, LogOut, Map as MapIcon, Navigation, Edit2, ChevronLeft, Check, ClipboardEdit, Lock, Unlock, Percent, AlertCircle } from 'lucide-react';
+import { Heart, X, MessageCircle, User, Sparkles, MapPin, BookOpen, Search, Settings, Mail, ArrowRight, LogOut, Map as MapIcon, Navigation, Edit2, ChevronLeft, Check, ClipboardEdit, Lock, Unlock, Percent, AlertCircle, Plus, Users, MoreHorizontal, Star, Shield, Crown, Trash2 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, signOut } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, updateDoc, onSnapshot, query, getDoc, getDocs } from 'firebase/firestore';
@@ -99,15 +99,25 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [realUsers, setRealUsers] = useState([]);
 
+  // 聊天与群组状态
   const [currentChatUser, setCurrentChatUser] = useState(null); 
+  const [currentChatGroup, setCurrentChatGroup] = useState(null); 
   const [allMessages, setAllMessages] = useState([]); 
   const [allRequests, setAllRequests] = useState([]); 
+  const [allGroups, setAllGroups] = useState([]); 
+  
   const [inputText, setInputText] = useState(''); 
   const chatEndRef = useRef(null); 
 
+  // 群组管理 UI 状态
+  const [isCreatingGroup, setIsCreatingGroup] = useState(false);
+  const [selectedGroupMembers, setSelectedGroupMembers] = useState([]);
+  const [groupNameInput, setGroupNameInput] = useState('');
+  const [showGroupSettings, setShowGroupSettings] = useState(false);
+
   const [userProfile, setUserProfile] = useState({
     name: '清华学子', gender: '男', age: '20', major: '计算机科学与技术系',
-    grade: '大二', height: '178', weight: '65', tagMode: ['side'], customTag: '' 
+    grade: '大二', height: '178', weight: '65', tagMode: ['side'], customTag: '', pinnedChats: []
   });
   const [qaAnswers, setQaAnswers] = useState({});
   const [isQaPublic, setIsQaPublic] = useState(true);
@@ -128,12 +138,12 @@ export default function App() {
                     allRequests.some(r => r.receiverId === currentUser?.uid && r.status === 'pending');
 
   useEffect(() => {
-    if (currentChatUser && chatEndRef.current) {
+    if ((currentChatUser || currentChatGroup) && chatEndRef.current) {
       chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [allMessages, currentChatUser]);
+  }, [allMessages, currentChatUser, currentChatGroup]);
 
-  // 当进入聊天界面时，将发给自己的消息标记为已读
+  // 当进入聊天界面时，将发给自己的私聊消息标记为已读
   useEffect(() => {
     if (currentChatUser && currentUser && db) {
       const chatId = [String(currentUser.uid), String(currentChatUser.id)].sort().join('_');
@@ -155,10 +165,8 @@ export default function App() {
       }
   });
 
-  // 全局过滤掉被拉黑的用户
   const displayProfiles = realUsers.filter(p => !blockedUids.has(p.id));
 
-  // 计算已取关的用户（最新的一条关系是 unfriend）
   const unfriendedUids = new Set();
   displayProfiles.forEach(p => {
       const reqs = allRequests.filter(r => ['add_friend', 'like', 'unfriend'].includes(r.type) && 
@@ -268,6 +276,20 @@ export default function App() {
     } catch (err) { console.error(err); }
   }, [currentUser]);
 
+  // 新增：监听群组数据
+  useEffect(() => {
+    if (!currentUser || !db) return;
+    try {
+      const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'groups'));
+      const unsubscribeGroup = onSnapshot(q, (snapshot) => {
+        const grps = [];
+        snapshot.forEach((docSnap) => grps.push({ id: docSnap.id, ...docSnap.data() }));
+        setAllGroups(grps);
+      }, console.error);
+      return () => unsubscribeGroup();
+    } catch (err) { console.error(err); }
+  }, [currentUser]);
+
   useEffect(() => {
     if (!currentUser || !db) return;
     const fetchMyProfile = async () => {
@@ -276,7 +298,7 @@ export default function App() {
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
           const myData = docSnap.data();
-          setUserProfile(prev => ({ ...prev, ...myData }));
+          setUserProfile(prev => ({ ...prev, ...myData, pinnedChats: myData.pinnedChats || [] }));
           if (myData.answers) setQaAnswers(myData.answers); 
           if (myData.name) setTempName(myData.name); 
         }
@@ -294,8 +316,8 @@ export default function App() {
   const handleLogout = async () => {
     try { if (auth) await signOut(auth); } catch (error) { console.error(error); }
     setIsAuthenticated(false); setAuthMode('login'); setEmail(''); setPassword(''); setUsername('');
-    setUserProfile({ name: '清华学子', gender: '男', age: '20', major: '计算机科学与技术系', grade: '大二', height: '178', weight: '65', tagMode: ['side'], customTag: '' });
-    setQaAnswers({}); setCurrentChatUser(null); setViewedProfile(null);
+    setUserProfile({ name: '清华学子', gender: '男', age: '20', major: '计算机科学与技术系', grade: '大二', height: '178', weight: '65', tagMode: ['side'], customTag: '', pinnedChats: [] });
+    setQaAnswers({}); setCurrentChatUser(null); setCurrentChatGroup(null); setViewedProfile(null);
   };
 
   const handleRegister = async () => {
@@ -318,7 +340,7 @@ export default function App() {
         const colors = ['from-blue-400 to-purple-500', 'from-pink-400 to-rose-500', 'from-emerald-400 to-teal-500', 'from-orange-400 to-amber-500', 'from-indigo-400 to-cyan-500'];
         const randomColor = colors[Math.floor(Math.random() * colors.length)];
         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'profiles', userCredential.user.uid), {
-          name: username.trim(), email: email, color: randomColor, major: "计算机科学与技术系", isPublic: false
+          name: username.trim(), email: email, color: randomColor, major: "计算机科学与技术系", isPublic: false, pinnedChats: []
         }, { merge: true });
       }
       setIsWaitVerify(true);
@@ -467,16 +489,25 @@ export default function App() {
   };
 
   const handleSendMessage = async () => {
-    if (!inputText.trim() || !currentUser || !currentChatUser || !db) return;
+    if (!inputText.trim() || !currentUser || !db) return;
+    if (!currentChatUser && !currentChatGroup) return;
+
     const text = inputText.trim();
     setInputText(''); 
+    
     try {
-      const chatId = [String(currentUser.uid), String(currentChatUser.id)].sort().join('_');
-      await setDoc(doc(collection(db, 'artifacts', appId, 'public', 'data', 'messages')), { chatId, text, senderId: currentUser.uid, receiverId: currentChatUser.id, timestamp: Date.now(), read: false });
+      const msgRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'messages'));
+      if (currentChatGroup) {
+        await setDoc(msgRef, {
+          chatId: currentChatGroup.id, text, senderId: currentUser.uid, receiverId: 'group', timestamp: Date.now()
+        });
+      } else {
+        const chatId = [String(currentUser.uid), String(currentChatUser.id)].sort().join('_');
+        await setDoc(msgRef, { chatId, text, senderId: currentUser.uid, receiverId: currentChatUser.id, timestamp: Date.now(), read: false });
+      }
     } catch (error) { showToast('发送失败'); }
   };
 
-  const updateQaAnswer = (id, val) => setQaAnswers(prev => ({ ...prev, [id]: val }));
   const toggleQaArrayItem = (id, item, limit = null) => {
     setQaAnswers(prev => {
       const current = prev[id] || [];
@@ -484,6 +515,61 @@ export default function App() {
       if (limit && current.length >= limit) { showToast(`该项最多只能选择 ${limit} 项`); return prev; }
       return { ...prev, [id]: [...current, item] };
     });
+  };
+  const updateQaAnswer = (id, val) => setQaAnswers(prev => ({ ...prev, [id]: val }));
+
+  // ----------------------------------------------------
+  // 群聊管理逻辑
+  // ----------------------------------------------------
+  const handleCreateGroup = async () => {
+    if (selectedGroupMembers.length === 0) return showToast("请至少选择一位好友");
+    try {
+      const newGroupId = `group_${Date.now()}`;
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'groups', newGroupId), {
+        name: groupNameInput || '新建群聊',
+        ownerId: currentUser.uid,
+        adminIds: [],
+        memberIds: [currentUser.uid, ...selectedGroupMembers],
+        createdAt: Date.now()
+      });
+      setIsCreatingGroup(false);
+      setSelectedGroupMembers([]);
+      setGroupNameInput('');
+      showToast('群聊创建成功！');
+    } catch (e) { showToast('建群失败'); }
+  };
+
+  const handleTogglePin = async (chatId) => {
+    const currentPinned = userProfile.pinnedChats || [];
+    const newPinned = currentPinned.includes(chatId) ? currentPinned.filter(id => id !== chatId) : [...currentPinned, chatId];
+    setUserProfile(prev => ({ ...prev, pinnedChats: newPinned }));
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'profiles', currentUser.uid), { pinnedChats: newPinned }, { merge: true });
+      showToast(newPinned.includes(chatId) ? '已置顶' : '已取消置顶');
+    } catch (e) { showToast('操作失败'); }
+  };
+
+  const handleGroupAction = async (action, targetId = null) => {
+    if (!currentChatGroup || !db) return;
+    const groupRef = doc(db, 'artifacts', appId, 'public', 'data', 'groups', currentChatGroup.id);
+    try {
+      if (action === 'leave') {
+        const newMembers = currentChatGroup.memberIds.filter(id => id !== currentUser.uid);
+        await setDoc(groupRef, { memberIds: newMembers }, { merge: true });
+        setCurrentChatGroup(null);
+        setShowGroupSettings(false);
+        showToast('已退出群聊');
+      } else if (action === 'set_admin') {
+        await setDoc(groupRef, { adminIds: [...(currentChatGroup.adminIds || []), targetId] }, { merge: true });
+        showToast('已设为管理员');
+      } else if (action === 'remove_admin') {
+        await setDoc(groupRef, { adminIds: (currentChatGroup.adminIds || []).filter(id => id !== targetId) }, { merge: true });
+        showToast('已取消管理员');
+      } else if (action === 'transfer_owner') {
+        await setDoc(groupRef, { ownerId: targetId }, { merge: true });
+        showToast('已转移群主');
+      }
+    } catch (e) { showToast('操作失败'); }
   };
 
   // ----------------------------------------------------
@@ -633,7 +719,6 @@ export default function App() {
     const pName = viewedProfile.name || '?';
     const themeColor = viewedProfile.color || 'from-purple-500 to-pink-500';
     
-    // 逻辑判定
     const hasAnswers = viewedProfile.answers && Object.keys(viewedProfile.answers).length > 0;
     const hasQaPermission = viewedProfile.id === currentUser?.uid || viewedProfile.isPublic || allRequests.some(r => r.senderId === currentUser?.uid && r.receiverId === viewedProfile.id && r.type === 'view_qa' && r.status === 'accepted');
     const isFriend = viewedProfile.id === currentUser?.uid || (!unfriendedUids.has(viewedProfile.id) && allRequests.some(r => (r.type === 'add_friend' || r.type === 'like') && r.status === 'accepted' && ((r.senderId === currentUser?.uid && r.receiverId === viewedProfile.id) || (r.senderId === viewedProfile.id && r.receiverId === currentUser?.uid))));
@@ -663,7 +748,6 @@ export default function App() {
              )}
           </div>
 
-          {/* 底部的申请/社交链控制按钮 */}
           {viewedProfile.id !== currentUser?.uid && (
             <div className="flex flex-col space-y-3 mt-8 border-t border-gray-100 pt-5">
               {isFriend ? (
@@ -704,23 +788,198 @@ export default function App() {
     );
   };
 
-  const renderMessages = () => {
-    const chattedUserIds = new Set(allMessages.filter(m => m.senderId === currentUser?.uid || m.receiverId === currentUser?.uid).map(m => m.senderId === currentUser?.uid ? String(m.receiverId) : String(m.senderId)));
+  const renderCreateGroupModal = () => {
+    if (!isCreatingGroup) return null;
     
-    // 合并相互划卡匹配 + 已经是好友（含互相关注）的用户
+    // 获取我的好友列表 (基于互相关注或相互添加好友)
     const acceptedFriendIds = allRequests
       .filter(r => (r.type === 'add_friend' || r.type === 'like') && r.status === 'accepted' && (r.senderId === currentUser?.uid || r.receiverId === currentUser?.uid))
       .map(r => r.senderId === currentUser?.uid ? String(r.receiverId) : String(r.senderId));
-
-    // 过滤掉被取关的用户 (且展示好友/聊过天/配对的人)
-    const chatListProfiles = displayProfiles.filter(p => !unfriendedUids.has(p.id) && (matches.some(m => m.id === p.id) || chattedUserIds.has(String(p.id)) || acceptedFriendIds.includes(String(p.id))));
     
-    // 过滤掉已经被拉黑的用户发来的待处理请求
+    const myFriends = displayProfiles.filter(p => !unfriendedUids.has(p.id) && acceptedFriendIds.includes(String(p.id)));
+
+    return (
+      <div className="absolute inset-0 bg-white z-40 flex flex-col animate-in slide-in-from-bottom duration-300">
+        <div className="flex items-center justify-between px-4 py-4 border-b border-gray-100">
+          <button onClick={() => { setIsCreatingGroup(false); setSelectedGroupMembers([]); setGroupNameInput(''); }} className="p-2 -ml-2 text-gray-600"><X className="w-6 h-6" /></button>
+          <h2 className="text-lg font-bold text-gray-900">发起群聊</h2>
+          <button onClick={handleCreateGroup} disabled={selectedGroupMembers.length === 0} className="text-purple-600 font-bold text-sm disabled:opacity-50">创建 ({selectedGroupMembers.length})</button>
+        </div>
+        <div className="p-4 bg-gray-50 border-b border-gray-100">
+           <input type="text" value={groupNameInput} onChange={e => setGroupNameInput(e.target.value)} placeholder="给群聊起个名字 (选填)" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
+        </div>
+        <div className="flex-1 overflow-y-auto p-2">
+          {myFriends.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-48 text-gray-400"><Users className="w-10 h-10 mb-2 opacity-20" /><p className="text-sm">暂无可拉入群聊的好友</p></div>
+          ) : (
+            myFriends.map(friend => {
+              const isSelected = selectedGroupMembers.includes(friend.id);
+              const themeColor = friend.color || 'from-blue-400 to-blue-600';
+              return (
+                <div key={friend.id} onClick={() => setSelectedGroupMembers(prev => isSelected ? prev.filter(id => id !== friend.id) : [...prev, friend.id])} className="flex items-center space-x-3 p-3 hover:bg-purple-50 rounded-2xl cursor-pointer">
+                  <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center mr-2 ${isSelected ? 'border-purple-600 bg-purple-600' : 'border-gray-300'}`}>
+                     {isSelected && <Check className="w-4 h-4 text-white" />}
+                  </div>
+                  <div className={`w-10 h-10 rounded-full bg-gradient-to-br ${themeColor} flex items-center justify-center text-white font-black`}>{friend.name?.[0]}</div>
+                  <span className="font-bold text-gray-900">{friend.name}</span>
+                </div>
+              )
+            })
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderGroupSettingsModal = () => {
+    if (!showGroupSettings || !currentChatGroup) return null;
+    
+    // 动态从 allGroups 获取最新的群数据，以便实时刷新管理员等状态
+    const activeGroup = allGroups.find(g => g.id === currentChatGroup.id) || currentChatGroup;
+    const isOwner = activeGroup.ownerId === currentUser.uid;
+    const isAdmin = isOwner || (activeGroup.adminIds || []).includes(currentUser.uid);
+    const isPinned = (userProfile.pinnedChats || []).includes(activeGroup.id);
+
+    return (
+      <div className="absolute inset-0 bg-gray-50 z-50 flex flex-col animate-in slide-in-from-right duration-300">
+        <div className="flex items-center justify-between px-4 py-4 bg-white border-b border-gray-100 shadow-sm">
+          <button onClick={() => setShowGroupSettings(false)} className="p-2 -ml-2 text-gray-600"><ChevronLeft className="w-6 h-6" /></button>
+          <h2 className="text-lg font-bold text-gray-900">群聊设置</h2>
+          <div className="w-8"></div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {/* 成员列表 */}
+          <div className="bg-white p-4 mb-3 border-b border-gray-100">
+            <h3 className="text-sm font-bold text-gray-500 mb-4">群成员 ({activeGroup.memberIds?.length || 0})</h3>
+            <div className="grid grid-cols-5 gap-y-4">
+              {(activeGroup.memberIds || []).map(uid => {
+                 const isMemOwner = activeGroup.ownerId === uid;
+                 const isMemAdmin = (activeGroup.adminIds || []).includes(uid);
+                 const p = displayProfiles.find(x => x.id === uid) || (uid === currentUser.uid ? userProfile : {name: '未知用户', color: 'from-gray-300 to-gray-400'});
+                 const themeColor = p.color || 'from-gray-400 to-gray-500';
+
+                 return (
+                   <div key={uid} className="flex flex-col items-center relative group">
+                     <div className={`w-12 h-12 rounded-full bg-gradient-to-br ${themeColor} flex items-center justify-center text-white font-black shadow-sm mb-1`}>
+                       {p.name?.[0] || '?'}
+                     </div>
+                     <span className="text-[10px] text-gray-600 truncate w-14 text-center">{p.name}</span>
+                     
+                     {/* 身份徽章 */}
+                     {isMemOwner && <div className="absolute -top-1 -right-1 bg-yellow-400 rounded-full p-0.5"><Crown className="w-3 h-3 text-white" /></div>}
+                     {!isMemOwner && isMemAdmin && <div className="absolute -top-1 -right-1 bg-blue-400 rounded-full p-0.5"><Shield className="w-3 h-3 text-white" /></div>}
+
+                     {/* 群主操作菜单 (悬浮展示，实际移动端需点击弹出，此处简化为点击直接触发操作框) */}
+                     {isOwner && uid !== currentUser.uid && (
+                        <div className="mt-2 flex flex-col space-y-1 w-full px-1">
+                          <button onClick={() => handleGroupAction(isMemAdmin ? 'remove_admin' : 'set_admin', uid)} className="text-[9px] bg-gray-100 text-gray-600 py-1 rounded">
+                            {isMemAdmin ? '取消管理' : '设管理员'}
+                          </button>
+                          <button onClick={() => { if(window.confirm('确认转移群主？')) handleGroupAction('transfer_owner', uid); }} className="text-[9px] bg-red-50 text-red-500 py-1 rounded">
+                            转群主
+                          </button>
+                        </div>
+                     )}
+                   </div>
+                 );
+              })}
+            </div>
+          </div>
+
+          {/* 设置项 */}
+          <div className="bg-white border-y border-gray-100 mb-6">
+             <div onClick={() => handleTogglePin(activeGroup.id)} className="flex justify-between items-center px-5 py-4 border-b border-gray-50 cursor-pointer active:bg-gray-50">
+                <span className="font-medium text-gray-900">置顶群聊</span>
+                <div className={`w-12 h-6 rounded-full relative transition-colors ${isPinned ? 'bg-green-500' : 'bg-gray-300'}`}><div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all ${isPinned ? 'left-6' : 'left-0.5'}`}></div></div>
+             </div>
+          </div>
+
+          {/* 退出按钮 */}
+          <div className="px-5">
+             <button onClick={() => { if(window.confirm('确定退出群聊吗？')) handleGroupAction('leave'); }} className="w-full py-4 bg-white border border-red-100 text-red-500 hover:bg-red-50 rounded-2xl font-bold flex items-center justify-center active:scale-95 transition-all">
+                <LogOut className="w-5 h-5 mr-2" /> 退出群聊
+             </button>
+             {isOwner && <p className="text-xs text-gray-400 text-center mt-3">提示：作为群主，退出前建议先移交群主身份哦</p>}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderMessages = () => {
+    // === 1对1聊天逻辑 ===
+    const chattedUserIds = new Set(allMessages.filter(m => m.senderId === currentUser?.uid || m.receiverId === currentUser?.uid).map(m => m.senderId === currentUser?.uid ? String(m.receiverId) : String(m.senderId)));
+    const acceptedFriendIds = allRequests.filter(r => (r.type === 'add_friend' || r.type === 'like') && r.status === 'accepted' && (r.senderId === currentUser?.uid || r.receiverId === currentUser?.uid)).map(r => r.senderId === currentUser?.uid ? String(r.receiverId) : String(r.senderId));
+    const privateProfiles = displayProfiles.filter(p => !unfriendedUids.has(p.id) && (matches.some(m => m.id === p.id) || chattedUserIds.has(String(p.id)) || acceptedFriendIds.includes(String(p.id))));
+    
+    // === 群聊逻辑 ===
+    const myGroups = allGroups.filter(g => (g.memberIds || []).includes(currentUser?.uid));
+
+    // === 统一聊天列表项 ===
+    let unifiedChatList = [];
+
+    // 加入私聊
+    privateProfiles.forEach(p => {
+       const chatId = [String(currentUser?.uid), String(p.id)].sort().join('_'); 
+       const msgs = allMessages.filter(m => m.chatId === chatId); 
+       const lastMsgObj = msgs.length > 0 ? msgs[msgs.length - 1] : null;
+       unifiedChatList.push({
+          isGroup: false,
+          target: p,
+          chatId: chatId,
+          lastTime: lastMsgObj ? lastMsgObj.timestamp : 0,
+          lastText: lastMsgObj ? lastMsgObj.text : '现在可以开始聊天啦！',
+          isUnread: lastMsgObj && lastMsgObj.receiverId === currentUser?.uid && !lastMsgObj.read,
+          themeColor: p.color || 'from-blue-400 to-blue-600',
+          avatarText: p.name?.[0] || '?',
+          title: p.name || '同学'
+       });
+    });
+
+    // 加入群聊
+    myGroups.forEach(g => {
+       const msgs = allMessages.filter(m => m.chatId === g.id); 
+       const lastMsgObj = msgs.length > 0 ? msgs[msgs.length - 1] : null;
+       let lastText = '群聊已创建';
+       if (lastMsgObj) {
+           const senderName = lastMsgObj.senderId === currentUser.uid ? '你' : (displayProfiles.find(p => p.id === lastMsgObj.senderId)?.name || '某人');
+           lastText = `${senderName}: ${lastMsgObj.text}`;
+       }
+       
+       unifiedChatList.push({
+          isGroup: true,
+          target: g,
+          chatId: g.id,
+          lastTime: lastMsgObj ? lastMsgObj.timestamp : (g.createdAt || 0),
+          lastText: lastText,
+          isUnread: false, // 群聊暂时不计入精确的个人已读未读红点，避免过度打扰
+          themeColor: 'from-indigo-400 to-blue-500',
+          avatarText: <Users className="w-6 h-6 text-white"/>,
+          title: `${g.name || '群聊'} (${g.memberIds?.length || 0})`
+       });
+    });
+
+    // === 排序引擎：置顶优先，时间其次 ===
+    const pinnedChats = userProfile.pinnedChats || [];
+    unifiedChatList.sort((a, b) => {
+       const aPinned = pinnedChats.includes(a.chatId) ? 1 : 0;
+       const bPinned = pinnedChats.includes(b.chatId) ? 1 : 0;
+       if (aPinned !== bPinned) return bPinned - aPinned; // 置顶的排前面
+       return b.lastTime - a.lastTime; // 都是置顶或都不是置顶，按时间倒序
+    });
+
     const myPendingReqs = allRequests.filter(r => r.receiverId === currentUser?.uid && r.status === 'pending' && !blockedUids.has(r.senderId));
 
     return (
-      <div className="h-full flex flex-col">
-        <div className="py-4 border-b border-gray-100 flex justify-between items-center"><h2 className="text-2xl font-bold text-gray-900">消息与通知</h2></div>
+      <div className="h-full flex flex-col relative">
+        <div className="py-4 border-b border-gray-100 flex justify-between items-center px-1">
+           <h2 className="text-2xl font-bold text-gray-900">消息与通知</h2>
+           <button onClick={() => setIsCreatingGroup(true)} className="w-8 h-8 bg-gray-50 hover:bg-gray-100 rounded-full flex items-center justify-center text-gray-600 transition-colors">
+              <Plus className="w-5 h-5" />
+           </button>
+        </div>
+        
         <div className="flex-1 overflow-y-auto pt-4 pb-10">
           
           {myPendingReqs.length > 0 && (
@@ -755,48 +1014,71 @@ export default function App() {
 
           <div className="px-1">
             <h3 className="text-sm font-bold text-gray-500 mb-3 px-1">聊天列表</h3>
-            {chatListProfiles.length > 0 ? (
+            {unifiedChatList.length > 0 ? (
               <div className="space-y-2">
-                {chatListProfiles.map(match => { 
-                  const themeColor = match.color || 'from-blue-400 to-blue-600'; 
-                  const chatId = [String(currentUser?.uid), String(match.id)].sort().join('_'); 
-                  const chatMsgs = allMessages.filter(m => m.chatId === chatId); 
-                  const lastMsgObj = chatMsgs[chatMsgs.length - 1];
-                  const lastMsg = lastMsgObj ? lastMsgObj.text : '现在可以开始聊天啦！';
-                  const isUnread = lastMsgObj && lastMsgObj.receiverId === currentUser?.uid && !lastMsgObj.read;
-
+                {unifiedChatList.map(chat => { 
+                  const isPinned = pinnedChats.includes(chat.chatId);
+                  
                   return (
-                    <div key={match.id} onClick={() => setCurrentChatUser(match)} className="flex items-center space-x-4 p-3 hover:bg-purple-50 rounded-2xl cursor-pointer transition-colors active:scale-95 bg-white border border-transparent hover:border-purple-100 relative">
-                      {isUnread && <div className="absolute left-1 top-1/2 transform -translate-y-1/2 w-2 h-2 bg-red-500 rounded-full"></div>}
-                      <div className={`w-14 h-14 rounded-full bg-gradient-to-br ${themeColor} flex items-center justify-center flex-shrink-0 shadow-sm border border-white ml-2`}><span className="text-white text-xl font-black">{match.name?.[0]}</span></div>
-                      <div className="flex-1 min-w-0"><h4 className={`text-base font-bold ${isUnread ? 'text-gray-900' : 'text-gray-700'}`}>{match.name}</h4><p className={`text-sm truncate ${isUnread ? 'text-purple-600 font-medium' : 'text-gray-500'}`}>{lastMsg}</p></div>
+                    <div key={chat.chatId} onClick={() => chat.isGroup ? setCurrentChatGroup(chat.target) : setCurrentChatUser(chat.target)} className={`flex items-center space-x-4 p-3 rounded-2xl cursor-pointer transition-colors active:scale-95 border border-transparent hover:border-purple-100 relative ${isPinned ? 'bg-purple-50' : 'bg-white hover:bg-gray-50'}`}>
+                      {chat.isUnread && <div className="absolute left-1 top-1/2 transform -translate-y-1/2 w-2 h-2 bg-red-500 rounded-full"></div>}
+                      
+                      <div className={`w-14 h-14 rounded-full bg-gradient-to-br ${chat.themeColor} flex items-center justify-center flex-shrink-0 shadow-sm border border-white ml-2`}>
+                         <span className="text-white text-xl font-black">{chat.avatarText}</span>
+                      </div>
+                      
+                      <div className="flex-1 min-w-0">
+                         <div className="flex justify-between items-center mb-0.5">
+                            <h4 className={`text-base font-bold truncate pr-2 ${chat.isUnread ? 'text-gray-900' : 'text-gray-700'}`}>{chat.title}</h4>
+                            {isPinned && <Star className="w-3.5 h-3.5 text-purple-400 fill-current flex-shrink-0" />}
+                         </div>
+                         <p className={`text-sm truncate ${chat.isUnread ? 'text-purple-600 font-medium' : 'text-gray-500'}`}>{chat.lastText}</p>
+                      </div>
                     </div>
                   )
                 })}
               </div>
             ) : (
-              <div className="flex flex-col items-center justify-center h-32 text-gray-400"><MessageCircle className="w-10 h-10 mb-2 opacity-20" /><p className="text-sm">暂无聊天记录，快去探索吧</p></div>
+              <div className="flex flex-col items-center justify-center h-32 text-gray-400"><MessageCircle className="w-10 h-10 mb-2 opacity-20" /><p className="text-sm">暂无聊天记录，快去探索或建群吧</p></div>
             )}
           </div>
         </div>
+
+        {renderCreateGroupModal()}
       </div>
     );
   };
 
   const renderChatView = () => {
-    if (!currentChatUser) return null;
-    const chatId = [String(currentUser?.uid), String(currentChatUser.id)].sort().join('_');
+    if (!currentChatUser && !currentChatGroup) return null;
+    
+    const isGroup = !!currentChatGroup;
+    const targetObj = isGroup ? currentChatGroup : currentChatUser;
+    
+    // 如果是群组，从 allGroups 拉取最新状态
+    const activeGroup = isGroup ? (allGroups.find(g => g.id === targetObj.id) || targetObj) : null;
+    
+    const chatId = isGroup ? activeGroup.id : [String(currentUser?.uid), String(currentChatUser.id)].sort().join('_');
     const chatMsgs = allMessages.filter(m => m.chatId === chatId);
-    const themeColor = currentChatUser.color || 'from-purple-400 to-pink-500';
+    const themeColor = isGroup ? 'from-indigo-400 to-blue-500' : (currentChatUser.color || 'from-purple-400 to-pink-500');
+    
+    const title = isGroup ? `${activeGroup.name || '群聊'} (${activeGroup.memberIds?.length || 0})` : currentChatUser.name;
+
     return (
       <div className="absolute inset-0 bg-gray-50 z-30 flex flex-col animate-in slide-in-from-right duration-300">
         <div className="flex items-center justify-between px-4 py-4 bg-white border-b border-gray-100 shadow-sm z-10">
-          <button onClick={() => setCurrentChatUser(null)} className="p-2 -ml-2 text-gray-600 hover:bg-gray-50 rounded-full transition"><ChevronLeft className="w-6 h-6" /></button>
-          <div onClick={() => setViewedProfile(currentChatUser)} className="flex items-center space-x-2 cursor-pointer active:scale-95">
-             <div className={`w-8 h-8 rounded-full flex items-center justify-center overflow-hidden bg-gradient-to-br ${themeColor} border border-white`}><span className="text-white font-bold text-sm">{currentChatUser.name?.[0]}</span></div>
-             <h2 className="text-lg font-bold text-gray-900">{currentChatUser.name}</h2>
+          <button onClick={() => { setCurrentChatUser(null); setCurrentChatGroup(null); }} className="p-2 -ml-2 text-gray-600 hover:bg-gray-50 rounded-full transition"><ChevronLeft className="w-6 h-6" /></button>
+          
+          <div onClick={() => !isGroup && setViewedProfile(currentChatUser)} className={`flex items-center space-x-2 ${!isGroup ? 'cursor-pointer active:scale-95' : ''}`}>
+             <div className={`w-8 h-8 rounded-full flex items-center justify-center overflow-hidden bg-gradient-to-br ${themeColor} border border-white`}>
+                {isGroup ? <Users className="w-4 h-4 text-white" /> : <span className="text-white font-bold text-sm">{currentChatUser.name?.[0]}</span>}
+             </div>
+             <h2 className="text-lg font-bold text-gray-900 truncate max-w-[150px]">{title}</h2>
           </div>
-          <div className="w-8"></div> 
+          
+          {isGroup ? (
+            <button onClick={() => setShowGroupSettings(true)} className="p-2 -mr-2 text-gray-600 hover:bg-gray-50 rounded-full transition"><MoreHorizontal className="w-6 h-6" /></button>
+          ) : <div className="w-8"></div>}
         </div>
 
         {/* 聊天消息区 */}
@@ -805,17 +1087,29 @@ export default function App() {
             chatMsgs.map(msg => { 
               const isMe = msg.senderId === currentUser?.uid; 
               const msgTime = new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-              const senderProfile = isMe ? userProfile : currentChatUser;
+              
+              let senderProfile = isMe ? userProfile : (displayProfiles.find(p => p.id === msg.senderId) || {name: '某人'});
               const msgThemeColor = senderProfile.color || 'from-purple-400 to-pink-500';
 
               return (
                 <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} w-full animate-in fade-in slide-in-from-bottom-2`}>
-                  {!isMe && (<div onClick={() => setViewedProfile(currentChatUser)} className={`w-9 h-9 rounded-full bg-gradient-to-br ${msgThemeColor} flex items-center justify-center flex-shrink-0 mr-3 cursor-pointer shadow-sm border border-white mt-1`}><span className="text-white text-sm font-black">{senderProfile.name?.[0] || '?'}</span></div>)}
+                  {!isMe && (
+                    <div onClick={() => {if(senderProfile.id) setViewedProfile(senderProfile)}} className={`w-9 h-9 rounded-full bg-gradient-to-br ${msgThemeColor} flex items-center justify-center flex-shrink-0 mr-3 mt-1 shadow-sm border border-white cursor-pointer`}>
+                       <span className="text-white text-sm font-black">{senderProfile.name?.[0] || '?'}</span>
+                    </div>
+                  )}
                   <div className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} max-w-[70%]`}>
-                    <div className={`px-4 py-2.5 rounded-2xl text-[15px] leading-relaxed shadow-sm ${isMe ? 'bg-purple-600 text-white rounded-tr-sm' : 'bg-white text-gray-800 rounded-tl-sm border border-gray-100'}`}>{msg.text}</div>
+                    {/* 群聊中如果是别人发的消息，在气泡上方显示名字 */}
+                    {isGroup && !isMe && <span className="text-[10px] text-gray-400 mb-1 ml-1">{senderProfile.name}</span>}
+                    
+                    <div className={`px-4 py-2.5 rounded-2xl text-[15px] leading-relaxed shadow-sm break-all ${isMe ? 'bg-purple-600 text-white rounded-tr-sm' : 'bg-white text-gray-800 rounded-tl-sm border border-gray-100'}`}>{msg.text}</div>
                     <span className="text-[10px] text-gray-400 mt-1.5 px-1">{msgTime}</span>
                   </div>
-                  {isMe && (<div onClick={() => setViewedProfile({id: currentUser.uid, ...userProfile})} className={`w-9 h-9 rounded-full bg-gradient-to-br ${msgThemeColor} flex items-center justify-center flex-shrink-0 ml-3 cursor-pointer shadow-sm border border-white mt-1`}><span className="text-white text-sm font-black">{senderProfile.name?.[0] || '?'}</span></div>)}
+                  {isMe && (
+                    <div onClick={() => setViewedProfile({id: currentUser.uid, ...userProfile})} className={`w-9 h-9 rounded-full bg-gradient-to-br ${msgThemeColor} flex items-center justify-center flex-shrink-0 ml-3 mt-1 shadow-sm border border-white cursor-pointer`}>
+                       <span className="text-white text-sm font-black">{senderProfile.name?.[0] || '?'}</span>
+                    </div>
+                  )}
                 </div>
               )
             })
@@ -823,6 +1117,8 @@ export default function App() {
           <div ref={chatEndRef} />
         </div>
         <div className="p-4 bg-white border-t border-gray-100"><div className="flex items-center space-x-2 relative"><input type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()} placeholder="发送消息..." className="flex-1 bg-gray-50 border border-gray-200 rounded-full pl-5 pr-14 py-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" /><button onClick={handleSendMessage} disabled={!inputText.trim()} className="absolute right-1.5 w-10 h-10 bg-purple-600 rounded-full flex items-center justify-center text-white active:scale-95"><ArrowRight className="w-5 h-5" /></button></div></div>
+        
+        {renderGroupSettingsModal()}
       </div>
     );
   };
